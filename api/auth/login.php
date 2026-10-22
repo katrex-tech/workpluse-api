@@ -35,28 +35,39 @@ if (!is_array($input)) {
     ], 400);
 }
 
-$email = isset($input['email']) && is_string($input['email'])
-    ? strtolower(trim($input['email']))
-    : '';
+// Support both 'email' or 'mobile' or generic 'identifier'
+$identifier = isset($input['identifier']) && is_string($input['identifier'])
+    ? trim($input['identifier'])
+    : (isset($input['email']) && is_string($input['email'])
+        ? trim($input['email'])
+        : (isset($input['mobile']) && is_string($input['mobile'])
+            ? trim($input['mobile'])
+            : ''));
+
 $password = isset($input['password']) && is_string($input['password'])
     ? $input['password']
     : '';
 
-if ($email === '' || $password === '') {
+if ($identifier === '' || $password === '') {
     sendJsonResponse([
         'status' => 'error',
-        'message' => 'email and password are required.',
+        'message' => 'Email/Mobile and password are required.',
     ], 422);
 }
 
+$cleanEmail = strtolower($identifier);
+
 try {
     $query = $pdo->prepare(
-        'SELECT id, employee_id, full_name, email, password, role
+        'SELECT id, employee_id, full_name, email, password, mobile, role, department, designation, status, must_change_password
          FROM users
-         WHERE email = :email
+         WHERE LOWER(email) = :email OR mobile = :mobile
          LIMIT 1'
     );
-    $query->execute(['email' => $email]);
+    $query->execute([
+        'email' => $cleanEmail,
+        'mobile' => $identifier,
+    ]);
     $user = $query->fetch();
 } catch (PDOException $exception) {
     error_log('User login lookup failed: ' . $exception->getMessage());
@@ -73,11 +84,18 @@ if ($user === false || !password_verify($password, $user['password'])) {
     ], 401);
 }
 
+if (isset($user['status']) && $user['status'] === 'inactive') {
+    sendJsonResponse([
+        'status' => 'error',
+        'message' => 'Your account has been deactivated. Please contact your HR or Super Admin.',
+    ], 403);
+}
+
 try {
     $token = generateJWT([
         'sub' => (string) $user['id'],
-        'employee_id' => $user['employee_id'],
-        'role' => $user['role'],
+        'employee_id' => $user['employee_id'] ?? '',
+        'role' => $user['role'] ?? 'member',
     ], $config['jwt_secret'], $config['jwt_expire']);
 } catch (Throwable $exception) {
     error_log('JWT generation failed: ' . $exception->getMessage());
@@ -92,10 +110,14 @@ sendJsonResponse([
     'message' => 'Login successful.',
     'token' => $token,
     'user' => [
-        'id' => $user['id'],
-        'employee_id' => $user['employee_id'],
+        'id' => (int) $user['id'],
+        'employee_id' => $user['employee_id'] ?? '',
         'full_name' => $user['full_name'],
         'email' => $user['email'],
-        'role' => $user['role'],
+        'mobile' => $user['mobile'] ?? '',
+        'role' => $user['role'] ?? 'member',
+        'department' => $user['department'] ?? 'General',
+        'designation' => $user['designation'] ?? 'Staff',
+        'must_change_password' => (bool) ($user['must_change_password'] ?? false),
     ],
 ]);

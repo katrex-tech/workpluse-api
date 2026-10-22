@@ -33,11 +33,11 @@ $now = time();
 
 try {
     // 1. User Profile
-    $userStmt = $pdo->prepare('SELECT id, employee_id, full_name, email, role FROM users WHERE id = :id LIMIT 1');
+    $userStmt = $pdo->prepare('SELECT id, employee_id, full_name, email, mobile, role, department, designation, status, date_of_joining, work_location, employment_type, profile_photo, reporting_manager_id FROM users WHERE id = :id LIMIT 1');
     $userStmt->execute(['id' => $userId]);
     $user = $userStmt->fetch();
 
-    $fullName = $user ? $user['full_name'] : 'Ritesh Katre';
+    $fullName = $user ? $user['full_name'] : 'Employee';
     $nameParts = explode(' ', trim($fullName));
     $initials = '';
     if (count($nameParts) >= 2) {
@@ -46,6 +46,114 @@ try {
         $initials = strtoupper(substr($nameParts[0], 0, 2));
     } else {
         $initials = 'WP';
+    }
+
+    $userRole = strtolower(trim($user['role'] ?? ''));
+    $userDesig = strtolower(trim($user['designation'] ?? ''));
+    $userDept = trim($user['department'] ?? '');
+
+    // Team query according to role / designation:
+    // Super Admin & HR -> Whole employee list
+    // TL -> Own team (reporting to TL or in TL's department)
+    // Employee -> Teammates in same department
+    $isSuperAdminOrHr = ($userRole === 'super_admin' || $userRole === 'hr' || str_contains($userDesig, 'hr') || str_contains($userDesig, 'admin'));
+    $isTl = ($userRole === 'tl' || str_contains($userDesig, 'tl') || str_contains($userDesig, 'team lead') || str_contains($userDesig, 'lead'));
+
+    if ($isSuperAdminOrHr) {
+        $teamScope = 'all_employees';
+        $teamTitle = 'All Employees';
+        $teamStmt = $pdo->prepare('
+            SELECT id, employee_id, full_name, email, mobile, designation, department, role, status, profile_photo, work_location
+            FROM users
+            WHERE status = "active"
+            ORDER BY full_name ASC
+        ');
+        $teamStmt->execute();
+        $teamMembersRaw = $teamStmt->fetchAll();
+    } elseif ($isTl) {
+        $teamScope = 'own_team';
+        $teamTitle = 'My Team';
+        $teamStmt = $pdo->prepare('
+            SELECT id, employee_id, full_name, email, mobile, designation, department, role, status, profile_photo, work_location
+            FROM users
+            WHERE status = "active"
+              AND (reporting_manager_id = :manager_id OR (department = :dept AND department != "" AND department != "General"))
+            ORDER BY full_name ASC
+        ');
+        $teamStmt->execute([
+            'manager_id' => $userId,
+            'dept' => $userDept,
+        ]);
+        $teamMembersRaw = $teamStmt->fetchAll();
+
+        if (empty($teamMembersRaw)) {
+            $teamStmt = $pdo->prepare('
+                SELECT id, employee_id, full_name, email, mobile, designation, department, role, status, profile_photo, work_location
+                FROM users
+                WHERE status = "active" AND id != :my_id
+                ORDER BY full_name ASC
+                LIMIT 10
+            ');
+            $teamStmt->execute(['my_id' => $userId]);
+            $teamMembersRaw = $teamStmt->fetchAll();
+        }
+    } else {
+        $teamScope = 'teammates';
+        $teamTitle = 'My Teammates';
+        $teamStmt = $pdo->prepare('
+            SELECT id, employee_id, full_name, email, mobile, designation, department, role, status, profile_photo, work_location
+            FROM users
+            WHERE status = "active"
+              AND id != :my_id
+              AND ((department = :dept AND department != "" AND department != "General") OR (reporting_manager_id IS NOT NULL AND reporting_manager_id = :manager_id))
+            ORDER BY full_name ASC
+        ');
+        $teamStmt->execute([
+            'my_id' => $userId,
+            'dept' => $userDept,
+            'manager_id' => $user['reporting_manager_id'] ?? 0,
+        ]);
+        $teamMembersRaw = $teamStmt->fetchAll();
+
+        if (empty($teamMembersRaw)) {
+            $teamStmt = $pdo->prepare('
+                SELECT id, employee_id, full_name, email, mobile, designation, department, role, status, profile_photo, work_location
+                FROM users
+                WHERE status = "active" AND id != :my_id
+                ORDER BY full_name ASC
+                LIMIT 6
+            ');
+            $teamStmt->execute(['my_id' => $userId]);
+            $teamMembersRaw = $teamStmt->fetchAll();
+        }
+    }
+
+    $teamMembers = [];
+    foreach ($teamMembersRaw as $m) {
+        $mParts = explode(' ', trim($m['full_name']));
+        $mInitials = '';
+        if (count($mParts) >= 2) {
+            $mInitials = strtoupper(substr($mParts[0], 0, 1) . substr($mParts[1], 0, 1));
+        } elseif (count($mParts) === 1 && strlen($mParts[0]) > 0) {
+            $mInitials = strtoupper(substr($mParts[0], 0, 2));
+        } else {
+            $mInitials = 'WP';
+        }
+
+        $teamMembers[] = [
+            'id' => (int) $m['id'],
+            'employee_id' => $m['employee_id'] ?? '',
+            'full_name' => $m['full_name'],
+            'name' => $m['full_name'],
+            'email' => $m['email'] ?? '',
+            'mobile' => $m['mobile'] ?? '',
+            'designation' => !empty($m['designation']) ? $m['designation'] : 'Team Member',
+            'department' => !empty($m['department']) ? $m['department'] : 'General',
+            'role' => $m['role'] ?? 'member',
+            'status' => $m['status'] ?? 'active',
+            'profile_photo' => $m['profile_photo'] ?? null,
+            'initials' => $mInitials,
+        ];
     }
 
     // 2. Today's Attendance
@@ -144,10 +252,18 @@ try {
             'user' => [
                 'id' => $user ? (int) $user['id'] : $userId,
                 'name' => $fullName,
-                'email' => $user['email'] ?? 'ritesh.katre@enterprise.com',
+                'full_name' => $fullName,
+                'email' => $user['email'] ?? 'employee@workpulse.com',
+                'mobile' => $user['mobile'] ?? '',
                 'employee_id' => $user['employee_id'] ?? 'WP-8921',
-                'role' => $user['role'] ?? 'Jr. Developer',
-                'department' => 'Tech Tower HQ',
+                'role' => $user['role'] ?? 'member',
+                'department' => $user['department'] ?? 'General',
+                'designation' => $user['designation'] ?? 'Employee',
+                'status' => $user['status'] ?? 'active',
+                'date_of_joining' => $user['date_of_joining'] ?? null,
+                'work_location' => $user['work_location'] ?? 'HQ Office',
+                'employment_type' => $user['employment_type'] ?? 'Full-Time',
+                'profile_photo' => $user['profile_photo'] ?? null,
                 'initials' => $initials,
             ],
             'unread_notifications' => $unreadCount,
@@ -197,6 +313,12 @@ try {
                 'checked_in_text' => '42 Checked In',
                 'department' => 'Dev & Design Core',
                 'standup_text' => 'Daily standup at 10:30 AM',
+            ],
+            'team' => [
+                'scope' => $teamScope,
+                'title' => $teamTitle,
+                'total_count' => count($teamMembers),
+                'members' => $teamMembers,
             ],
         ],
     ], 200);
