@@ -32,6 +32,7 @@ if ($userId === false) {
 try {
     $query = $pdo->prepare(
         "SELECT
+            id,
             employee_id,
             full_name,
             email,
@@ -45,12 +46,11 @@ try {
             work_location,
             status
          FROM users
-         WHERE id = :id AND role = :role
+         WHERE id = :id
          LIMIT 1"
     );
     $query->execute([
         'id' => $userId,
-        'role' => 'employee',
     ]);
     $teamMember = $query->fetch();
 } catch (PDOException $exception) {
@@ -68,6 +68,18 @@ if ($teamMember === false) {
         'message' => 'Team member not found.',
         'data' => [],
     ], 404);
+}
+
+$nameParts = explode(' ', trim($teamMember['full_name']));
+$initials = '';
+if (isset($nameParts[0][0])) $initials .= strtoupper($nameParts[0][0]);
+if (isset($nameParts[1][0])) $initials .= strtoupper($nameParts[1][0]);
+$teamMember['initials'] = $initials ?: 'WP';
+if (empty($teamMember['designation'])) {
+    $teamMember['designation'] = 'Team Member';
+}
+if (empty($teamMember['department'])) {
+    $teamMember['department'] = 'Engineering';
 }
 
 sendJsonResponse([

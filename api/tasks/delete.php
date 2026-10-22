@@ -7,8 +7,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     exit;
 }
 
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'DELETE') {
-    header('Allow: DELETE, OPTIONS');
+if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['DELETE', 'POST'], true)) {
+    header('Allow: DELETE, POST, OPTIONS');
     sendJsonResponse([
         'status' => false,
         'message' => 'Method not allowed.',

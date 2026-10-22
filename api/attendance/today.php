@@ -17,62 +17,99 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 }
 
 require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../config/auth_check.php';
 
-$userId = filter_var($_GET['user_id'] ?? null, FILTER_VALIDATE_INT, [
-    'options' => ['min_range' => 1],
-]);
-if ($userId === false) {
+$userId = isset($_GET['user_id']) ? (int) $_GET['user_id'] : getAuthenticatedUserId(false);
+if (!$userId || $userId < 1) {
     sendJsonResponse([
         'status' => 'error',
-        'message' => 'A valid user_id query parameter is required.',
+        'message' => 'User ID is required.',
         'data' => null,
     ], 422);
 }
 
-$attendanceDate = date('Y-m-d');
+$today = date('Y-m-d');
+$now = time();
 
 try {
-    $userQuery = $pdo->prepare('SELECT id FROM users WHERE id = :user_id LIMIT 1');
-    $userQuery->execute(['user_id' => $userId]);
-    if ($userQuery->fetch() === false) {
-        sendJsonResponse([
-            'status' => 'error',
-            'message' => 'User not found.',
-            'data' => null,
-        ], 404);
-    }
+    $stmt = $pdo->prepare('
+        SELECT id, punch_in, punch_out, date, working_hours, status
+        FROM attendance
+        WHERE user_id = :user_id AND date = :today
+        ORDER BY id DESC
+        LIMIT 1
+    ');
+    $stmt->execute(['user_id' => $userId, 'today' => $today]);
+    $attendance = $stmt->fetch();
 
-    $query = $pdo->prepare(
-        'SELECT punch_in, punch_out, working_hours
-         FROM attendance
-         WHERE user_id = :user_id AND attendance_date = :attendance_date
-         LIMIT 1'
-    );
-    $query->execute([
-        'user_id' => $userId,
-        'attendance_date' => $attendanceDate,
-    ]);
-    $attendance = $query->fetch();
-} catch (PDOException $exception) {
-    error_log('Today attendance lookup failed: ' . $exception->getMessage());
+    if ($attendance) {
+        $inTs = strtotime($attendance['punch_in']);
+        $outTs = $attendance['punch_out'] ? strtotime($attendance['punch_out']) : null;
+        $isPunchedIn = ($outTs === null);
+
+        $elapsedSeconds = $isPunchedIn ? max(0, $now - $inTs) : max(0, $outTs - $inTs);
+        $hours = floor($elapsedSeconds / 3600);
+        $mins = floor(($elapsedSeconds % 3600) / 60);
+        $hoursLogged = "{$hours}h " . str_pad((string)$mins, 2, '0', STR_PAD_LEFT) . 'm';
+
+        $totalShiftSeconds = 9 * 3600;
+        $percentComplete = min(100, (int) round(($elapsedSeconds / $totalShiftSeconds) * 100));
+        $remSeconds = max(0, $totalShiftSeconds - $elapsedSeconds);
+        $remHours = floor($remSeconds / 3600);
+        $remMins = floor(($remSeconds % 3600) / 60);
+        $remainingText = "{$remHours}h " . str_pad((string)$remMins, 2, '0', STR_PAD_LEFT) . 'm remaining';
+
+        sendJsonResponse([
+            'status' => 'success',
+            'message' => 'Today attendance retrieved.',
+            'data' => [
+                'id' => (int) $attendance['id'],
+                'user_id' => $userId,
+                'date' => $today,
+                'date_formatted' => date('D, M d, Y'),
+                'is_punched_in' => $isPunchedIn,
+                'punch_in' => $attendance['punch_in'],
+                'punch_out' => $attendance['punch_out'],
+                'clock_in_time' => date('h:i A', $inTs),
+                'clock_out_time' => $outTs ? date('h:i A', $outTs) : null,
+                'seconds_elapsed' => $elapsedSeconds,
+                'hours_logged' => $hoursLogged,
+                'percent_complete' => $percentComplete,
+                'remaining_text' => $remainingText,
+                'working_hours' => $attendance['working_hours'] !== null ? (float) $attendance['working_hours'] : round($elapsedSeconds / 3600, 2),
+                'status' => $attendance['status'],
+                'on_time' => ($inTs <= strtotime($today . ' 09:15:00')),
+            ],
+        ]);
+    } else {
+        sendJsonResponse([
+            'status' => 'success',
+            'message' => 'No attendance record for today yet.',
+            'data' => [
+                'id' => null,
+                'user_id' => $userId,
+                'date' => $today,
+                'date_formatted' => date('D, M d, Y'),
+                'is_punched_in' => false,
+                'punch_in' => null,
+                'punch_out' => null,
+                'clock_in_time' => null,
+                'clock_out_time' => null,
+                'seconds_elapsed' => 0,
+                'hours_logged' => '0h 00m',
+                'percent_complete' => 0,
+                'remaining_text' => '9h 00m remaining',
+                'working_hours' => 0.0,
+                'status' => 'not_punched_in',
+                'on_time' => true,
+            ],
+        ]);
+    }
+} catch (PDOException $e) {
+    error_log('Today attendance lookup failed: ' . $e->getMessage());
     sendJsonResponse([
         'status' => 'error',
-        'message' => 'Unable to retrieve today\'s attendance.',
+        'message' => 'Failed to load today attendance.',
         'data' => null,
     ], 500);
 }
-
-sendJsonResponse([
-    'status' => 'success',
-    'message' => 'Today\'s attendance retrieved successfully.',
-    'data' => [
-        'user_id' => $userId,
-        'attendance_date' => $attendanceDate,
-        'is_punched_in' => $attendance !== false && $attendance['punch_out'] === null,
-        'punch_in' => $attendance === false ? null : $attendance['punch_in'],
-        'punch_out' => $attendance === false ? null : $attendance['punch_out'],
-        'working_hours' => $attendance === false || $attendance['working_hours'] === null
-            ? null
-            : (float) $attendance['working_hours'],
-    ],
-]);

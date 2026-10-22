@@ -36,3 +36,45 @@ function base64UrlEncode($value)
 {
     return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
 }
+
+function base64UrlDecode($value)
+{
+    $remainder = strlen($value) % 4;
+    if ($remainder) {
+        $padlen = 4 - $remainder;
+        $value .= str_repeat('=', $padlen);
+    }
+    return base64_decode(strtr($value, '-_', '+/'));
+}
+
+function verifyJWT(string $token, string $secret)
+{
+    $parts = explode('.', $token);
+    if (count($parts) !== 3) {
+        return false;
+    }
+
+    [$header64, $payload64, $sig64] = $parts;
+    $signingInput = $header64 . '.' . $payload64;
+    $expectedSig = base64UrlEncode(hash_hmac('sha256', $signingInput, $secret, true));
+
+    if (!hash_equals($expectedSig, $sig64)) {
+        return false;
+    }
+
+    $payloadJson = base64UrlDecode($payload64);
+    if (!$payloadJson) {
+        return false;
+    }
+
+    $payload = json_decode($payloadJson, true);
+    if (!is_array($payload)) {
+        return false;
+    }
+
+    if (isset($payload['exp']) && $payload['exp'] < time()) {
+        return false; // Expired
+    }
+
+    return $payload;
+}

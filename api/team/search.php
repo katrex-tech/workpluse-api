@@ -47,16 +47,17 @@ try {
     $query = $pdo->prepare(
         "SELECT
             id,
+            employee_id,
             full_name,
             email,
+            mobile,
             designation,
             department,
             profile_photo,
             role,
             status
          FROM users
-         WHERE role = :role
-           AND status = :status
+         WHERE status = :status
            AND (
                 full_name LIKE :name_search ESCAPE '!'
                 OR email LIKE :email_search ESCAPE '!'
@@ -66,7 +67,6 @@ try {
          ORDER BY full_name ASC"
     );
     $query->execute([
-        'role' => 'employee',
         'status' => 'active',
         'name_search' => $searchTerm,
         'email_search' => $searchTerm,
@@ -82,6 +82,21 @@ try {
         'data' => [],
     ], 500);
 }
+
+foreach ($teamMembers as &$member) {
+    $nameParts = explode(' ', trim($member['full_name']));
+    $initials = '';
+    if (isset($nameParts[0][0])) $initials .= strtoupper($nameParts[0][0]);
+    if (isset($nameParts[1][0])) $initials .= strtoupper($nameParts[1][0]);
+    $member['initials'] = $initials ?: 'WP';
+    if (empty($member['designation'])) {
+        $member['designation'] = 'Team Member';
+    }
+    if (empty($member['department'])) {
+        $member['department'] = 'Engineering';
+    }
+}
+unset($member);
 
 sendJsonResponse([
     'status' => true,

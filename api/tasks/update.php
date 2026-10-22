@@ -7,8 +7,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     exit;
 }
 
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'PUT') {
-    header('Allow: PUT, OPTIONS');
+if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['PUT', 'POST'], true)) {
+    header('Allow: PUT, POST, OPTIONS');
     sendJsonResponse([
         'status' => false,
         'message' => 'Method not allowed.',

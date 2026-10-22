@@ -19,23 +19,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 require_once __DIR__ . '/../../config/database.php';
 
 try {
-    $query = $pdo->prepare(
-        "SELECT
-            id,
-            full_name,
-            designation,
-            department,
-            profile_photo,
-            role,
-            status
-         FROM users
-         WHERE status = :status AND role = :role
-         ORDER BY full_name ASC"
-    );
-    $query->execute([
-        'status' => 'active',
-        'role' => 'employee',
-    ]);
+    $department = $_GET['department'] ?? null;
+    $sql = "SELECT
+                id,
+                employee_id,
+                full_name,
+                email,
+                mobile,
+                designation,
+                department,
+                profile_photo,
+                role,
+                employment_type,
+                date_of_joining,
+                work_location,
+                status
+             FROM users
+             WHERE status = :status";
+    $params = ['status' => 'active'];
+
+    if ($department !== null && trim($department) !== '') {
+        $sql .= " AND department = :department";
+        $params['department'] = trim($department);
+    }
+
+    $sql .= " ORDER BY full_name ASC";
+
+    $query = $pdo->prepare($sql);
+    $query->execute($params);
     $teamMembers = $query->fetchAll();
 } catch (PDOException $exception) {
     error_log('Team member list failed: ' . $exception->getMessage());
@@ -45,6 +56,22 @@ try {
         'data' => [],
     ], 500);
 }
+
+// Compute initials and fallback designation
+foreach ($teamMembers as &$member) {
+    $nameParts = explode(' ', trim($member['full_name']));
+    $initials = '';
+    if (isset($nameParts[0][0])) $initials .= strtoupper($nameParts[0][0]);
+    if (isset($nameParts[1][0])) $initials .= strtoupper($nameParts[1][0]);
+    $member['initials'] = $initials ?: 'WP';
+    if (empty($member['designation'])) {
+        $member['designation'] = 'Team Member';
+    }
+    if (empty($member['department'])) {
+        $member['department'] = 'Engineering';
+    }
+}
+unset($member);
 
 sendJsonResponse([
     'status' => true,

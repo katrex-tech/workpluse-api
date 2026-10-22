@@ -32,7 +32,7 @@ if ($userId === false) {
     ], 422);
 }
 
-if ($status !== null && (!is_string($status) || !in_array($status, $allowedStatuses, true))) {
+if ($status !== null && (!is_string($status) || !in_array(strtolower($status), $allowedStatuses, true))) {
     sendJsonResponse([
         'status' => false,
         'message' => 'status must be pending, approved, rejected, or cancelled.',
@@ -52,24 +52,24 @@ try {
     }
 
     $sql = 'SELECT
-                la.id,
-                lt.name AS leave_type,
-                la.from_date,
-                la.to_date,
-                la.half_day,
-                la.reason,
-                la.status,
-                la.applied_at
-            FROM leave_applications AS la
-            INNER JOIN leave_types AS lt ON lt.id = la.leave_type_id
-            WHERE la.user_id = :user_id';
+                l.id,
+                l.user_id,
+                l.leave_type,
+                l.from_date,
+                l.to_date,
+                l.half_day,
+                l.reason,
+                l.status,
+                l.applied_at
+            FROM leaves AS l
+            WHERE l.user_id = :user_id';
     $parameters = ['user_id' => $userId];
 
-    if ($status !== null) {
-        $sql .= ' AND la.status = :status';
-        $parameters['status'] = $status;
+    if ($status !== null && strtolower($status) !== 'all') {
+        $sql .= ' AND LOWER(l.status) = :status';
+        $parameters['status'] = strtolower($status);
     }
-    $sql .= ' ORDER BY la.applied_at DESC, la.id DESC';
+    $sql .= ' ORDER BY l.applied_at DESC, l.id DESC';
 
     $query = $pdo->prepare($sql);
     $query->execute($parameters);
@@ -83,10 +83,20 @@ try {
     ], 500);
 }
 
-foreach ($applications as &$application) {
-    $application['half_day'] = (bool) $application['half_day'];
+foreach ($applications as &$app) {
+    $from = new DateTime($app['from_date']);
+    $to = new DateTime($app['to_date']);
+    $days = $from->diff($to)->days + 1;
+    if ($app['half_day'] !== 'none') {
+        $days = 0.5;
+    }
+    $app['duration_days'] = $days;
+    $app['duration_formatted'] = $days == 1 ? '1 Day' : ($days == 0.5 ? 'Half Day' : "$days Days");
+    $app['formatted_dates'] = date('d M Y', strtotime($app['from_date'])) .
+        ($app['from_date'] !== $app['to_date'] ? ' - ' . date('d M Y', strtotime($app['to_date'])) : '');
+    $app['applied_on'] = date('d M Y', strtotime($app['applied_at']));
 }
-unset($application);
+unset($app);
 
 sendJsonResponse([
     'status' => true,

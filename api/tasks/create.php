@@ -42,29 +42,33 @@ $title = isset($input['title']) && is_string($input['title'])
 $description = isset($input['description']) && is_string($input['description'])
     ? trim($input['description'])
     : '';
-$categoryInput = $input['category_id'] ?? null;
+$categoryInput = $input['category_id'] ?? 1;
 $categoryId = is_string($categoryInput) || is_int($categoryInput)
     ? filter_var($categoryInput, FILTER_VALIDATE_INT, [
         'options' => ['min_range' => 1],
     ])
-    : false;
-$assigneeInput = $input['assigned_to'] ?? null;
+    : 1;
+$assigneeInput = $input['assigned_to'] ?? ($input['user_id'] ?? 1);
 $assignedTo = is_string($assigneeInput) || is_int($assigneeInput)
     ? filter_var($assigneeInput, FILTER_VALIDATE_INT, [
         'options' => ['min_range' => 1],
     ])
-    : false;
-$assignerInput = $input['assigned_by'] ?? null;
+    : 1;
+$assignerInput = $input['assigned_by'] ?? $assignedTo;
 $assignedBy = is_string($assignerInput) || is_int($assignerInput)
     ? filter_var($assignerInput, FILTER_VALIDATE_INT, [
         'options' => ['min_range' => 1],
     ])
-    : false;
-$priority = isset($input['priority']) && is_string($input['priority'])
-    ? trim($input['priority'])
-    : '';
-$startDate = $input['start_date'] ?? null;
-$dueDate = $input['due_date'] ?? null;
+    : 1;
+$priority = isset($input['priority']) && is_string($input['priority']) && trim($input['priority']) !== ''
+    ? strtolower(trim($input['priority']))
+    : 'medium';
+if (!in_array($priority, ['low', 'medium', 'high'], true)) {
+    $priority = 'medium';
+}
+
+$startDate = $input['start_date'] ?? date('Y-m-d');
+$dueDate = $input['due_date'] ?? date('Y-m-d', strtotime('+3 days'));
 $dueTime = $input['due_time'] ?? null;
 $isValidDate = static function ($value) {
     if (!is_string($value)) {
@@ -89,8 +93,6 @@ if (
     || $categoryId === false
     || $assignedTo === false
     || $assignedBy === false
-    || $priority === ''
-    || strlen($priority) > 50
     || !$isValidDate($startDate)
     || !$isValidDate($dueDate)
     || ($dueTime !== null && !$isValidTime($dueTime))

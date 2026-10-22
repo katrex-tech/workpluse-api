@@ -29,6 +29,8 @@ if ($userId === false) {
     ], 422);
 }
 
+$year = (int) ($_GET['year'] ?? date('Y'));
+
 try {
     $userQuery = $pdo->prepare('SELECT id FROM users WHERE id = :user_id LIMIT 1');
     $userQuery->execute(['user_id' => $userId]);
@@ -42,17 +44,51 @@ try {
 
     $query = $pdo->prepare(
         'SELECT
-            lt.id AS leave_type_id,
-            lt.name AS leave_type,
-            COALESCE(lb.total_days, lt.default_days, 0) AS total_days,
-            COALESCE(lb.used_days, 0) AS used_days
-         FROM leave_types AS lt
-         LEFT JOIN leave_balances AS lb
-           ON lb.leave_type_id = lt.id AND lb.user_id = :user_id
-         ORDER BY lt.name'
+            id,
+            leave_type,
+            total,
+            used,
+            remaining,
+            year
+         FROM leave_balance
+         WHERE user_id = :user_id AND year = :year
+         ORDER BY id ASC'
     );
-    $query->execute(['user_id' => $userId]);
+    $query->execute([
+        'user_id' => $userId,
+        'year' => $year,
+    ]);
     $balances = $query->fetchAll();
+
+    // If user has no balance records seeded yet for this year, seed default allocations
+    if (empty($balances)) {
+        $defaultTypes = [
+            ['type' => 'Casual Leave', 'total' => 12.0],
+            ['type' => 'Sick Leave', 'total' => 10.0],
+            ['type' => 'Annual Leave', 'total' => 15.0],
+        ];
+
+        $insert = $pdo->prepare(
+            'INSERT INTO leave_balance (user_id, leave_type, total, used, remaining, year)
+             VALUES (:user_id, :leave_type, :total, 0.0, :remaining, :year)'
+        );
+
+        foreach ($defaultTypes as $dt) {
+            $insert->execute([
+                'user_id' => $userId,
+                'leave_type' => $dt['type'],
+                'total' => $dt['total'],
+                'remaining' => $dt['total'],
+                'year' => $year,
+            ]);
+        }
+
+        $query->execute([
+            'user_id' => $userId,
+            'year' => $year,
+        ]);
+        $balances = $query->fetchAll();
+    }
 } catch (PDOException $exception) {
     error_log('Leave balance lookup failed: ' . $exception->getMessage());
     sendJsonResponse([
@@ -62,10 +98,16 @@ try {
     ], 500);
 }
 
+$totalRemaining = 0.0;
 foreach ($balances as &$balance) {
-    $balance['total_days'] = (float) $balance['total_days'];
-    $balance['used_days'] = (float) $balance['used_days'];
-    $balance['remaining_days'] = $balance['total_days'] - $balance['used_days'];
+    $balance['total'] = (float) $balance['total'];
+    $balance['used'] = (float) $balance['used'];
+    $balance['remaining'] = (float) $balance['remaining'];
+    // provide aliases for frontend compatibility
+    $balance['total_days'] = $balance['total'];
+    $balance['used_days'] = $balance['used'];
+    $balance['remaining_days'] = $balance['remaining'];
+    $totalRemaining += $balance['remaining'];
 }
 unset($balance);
 
@@ -74,6 +116,8 @@ sendJsonResponse([
     'message' => 'Leave balance retrieved successfully.',
     'data' => [
         'user_id' => $userId,
+        'year' => $year,
+        'total_remaining_days' => $totalRemaining,
         'balances' => $balances,
     ],
 ]);

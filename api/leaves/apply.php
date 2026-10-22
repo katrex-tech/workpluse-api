@@ -41,36 +41,39 @@ $userId = filter_var($input['user_id'] ?? null, FILTER_VALIDATE_INT, [
 ]);
 $leaveType = isset($input['leave_type']) && is_string($input['leave_type'])
     ? trim($input['leave_type'])
-    : '';
+    : 'Casual Leave';
 $fromDate = $input['from_date'] ?? null;
-$toDate = $input['to_date'] ?? null;
+$toDate = $input['to_date'] ?? $fromDate;
 $reason = isset($input['reason']) && is_string($input['reason'])
     ? trim($input['reason'])
     : '';
-$halfDayValue = $input['half_day'] ?? false;
+
+$halfDayInput = $input['half_day'] ?? 'none';
+$halfDay = 'none';
+if (is_bool($halfDayInput)) {
+    $halfDay = $halfDayInput ? 'first' : 'none';
+} elseif (in_array(strtolower((string)$halfDayInput), ['none', 'first', 'second'], true)) {
+    $halfDay = strtolower((string)$halfDayInput);
+}
 
 $isValidDate = static function ($value) {
     if (!is_string($value)) {
         return false;
     }
-
     $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
     return $date !== false && $date->format('Y-m-d') === $value;
 };
 
-$halfDay = filter_var($halfDayValue, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 if (
     $userId === false
     || $leaveType === ''
-    || strlen($leaveType) > 100
     || !$isValidDate($fromDate)
     || !$isValidDate($toDate)
     || $reason === ''
-    || $halfDay === null
 ) {
     sendJsonResponse([
         'status' => false,
-        'message' => 'Valid user_id, leave_type, from_date, to_date, half_day, and reason are required.',
+        'message' => 'Valid user_id, leave_type, from_date, to_date, and reason are required.',
         'data' => [],
     ], 422);
 }
@@ -79,14 +82,6 @@ if ($fromDate > $toDate) {
     sendJsonResponse([
         'status' => false,
         'message' => 'from_date must be on or before to_date.',
-        'data' => [],
-    ], 422);
-}
-
-if ($halfDay && $fromDate !== $toDate) {
-    sendJsonResponse([
-        'status' => false,
-        'message' => 'A half-day leave must have the same from_date and to_date.',
         'data' => [],
     ], 422);
 }
@@ -102,40 +97,51 @@ try {
         ], 404);
     }
 
-    $typeQuery = $pdo->prepare(
-        'SELECT id, name FROM leave_types WHERE name = :name LIMIT 1'
-    );
-    $typeQuery->execute(['name' => $leaveType]);
-    $type = $typeQuery->fetch();
-    if ($type === false) {
-        sendJsonResponse([
-            'status' => false,
-            'message' => 'Leave type not found.',
-            'data' => [],
-        ], 422);
-    }
-
     $insert = $pdo->prepare(
-        'INSERT INTO leave_applications
-            (user_id, leave_type_id, from_date, to_date, half_day, reason, status)
+        'INSERT INTO leaves
+            (user_id, leave_type, from_date, to_date, half_day, reason, status)
          VALUES
-            (:user_id, :leave_type_id, :from_date, :to_date, :half_day, :reason, :status)'
+            (:user_id, :leave_type, :from_date, :to_date, :half_day, :reason, :status)'
     );
     $insert->execute([
         'user_id' => $userId,
-        'leave_type_id' => $type['id'],
+        'leave_type' => $leaveType,
         'from_date' => $fromDate,
         'to_date' => $toDate,
-        'half_day' => $halfDay ? 1 : 0,
+        'half_day' => $halfDay,
         'reason' => $reason,
         'status' => 'pending',
     ]);
-    $applicationId = (int) $pdo->lastInsertId();
+    $leaveId = (int) $pdo->lastInsertId();
+
+    // Calculate applied days
+    $d1 = new DateTime($fromDate);
+    $d2 = new DateTime($toDate);
+    $days = $d1->diff($d2)->days + 1;
+    if ($halfDay !== 'none') {
+        $days = 0.5;
+    }
+
+    // Update leave balance if present
+    $year = date('Y', strtotime($fromDate));
+    $balanceUpdate = $pdo->prepare(
+        'UPDATE leave_balance
+         SET used = used + :days_used, remaining = GREATEST(0, remaining - :days_remaining)
+         WHERE user_id = :user_id AND leave_type = :leave_type AND year = :year'
+    );
+    $balanceUpdate->execute([
+        'days_used' => $days,
+        'days_remaining' => $days,
+        'user_id' => $userId,
+        'leave_type' => $leaveType,
+        'year' => $year,
+    ]);
+
 } catch (PDOException $exception) {
     error_log('Leave application creation failed: ' . $exception->getMessage());
     sendJsonResponse([
         'status' => false,
-        'message' => 'Unable to submit leave application.',
+        'message' => 'Unable to submit leave application: ' . $exception->getMessage(),
         'data' => [],
     ], 500);
 }
@@ -144,12 +150,15 @@ sendJsonResponse([
     'status' => true,
     'message' => 'Leave application submitted successfully.',
     'data' => [
-        'id' => $applicationId,
+        'id' => $leaveId,
         'user_id' => $userId,
-        'leave_type' => $type['name'],
+        'leave_type' => $leaveType,
         'from_date' => $fromDate,
         'to_date' => $toDate,
         'half_day' => $halfDay,
+        'duration_days' => $days,
+        'duration_formatted' => $days == 1 ? '1 Day' : ($days == 0.5 ? 'Half Day' : "$days Days"),
+        'reason' => $reason,
         'status' => 'pending',
     ],
 ], 201);

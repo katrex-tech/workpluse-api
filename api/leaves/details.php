@@ -32,19 +32,17 @@ if ($applicationId === false) {
 try {
     $query = $pdo->prepare(
         'SELECT
-            la.id,
-            la.user_id,
-            la.leave_type_id,
-            lt.name AS leave_type,
-            la.from_date,
-            la.to_date,
-            la.half_day,
-            la.reason,
-            la.status,
-            la.applied_at
-         FROM leave_applications AS la
-         INNER JOIN leave_types AS lt ON lt.id = la.leave_type_id
-         WHERE la.id = :id
+            l.id,
+            l.user_id,
+            l.leave_type,
+            l.from_date,
+            l.to_date,
+            l.half_day,
+            l.reason,
+            l.status,
+            l.applied_at
+         FROM leaves AS l
+         WHERE l.id = :id
          LIMIT 1'
     );
     $query->execute(['id' => $applicationId]);
@@ -66,7 +64,17 @@ if ($application === false) {
     ], 404);
 }
 
-$application['half_day'] = (bool) $application['half_day'];
+$from = new DateTime($application['from_date']);
+$to = new DateTime($application['to_date']);
+$days = $from->diff($to)->days + 1;
+if ($application['half_day'] !== 'none') {
+    $days = 0.5;
+}
+$application['duration_days'] = $days;
+$application['duration_formatted'] = $days == 1 ? '1 Day' : ($days == 0.5 ? 'Half Day' : "$days Days");
+$application['formatted_dates'] = date('d M Y', strtotime($application['from_date'])) .
+    ($application['from_date'] !== $application['to_date'] ? ' - ' . date('d M Y', strtotime($application['to_date'])) : '');
+$application['applied_on'] = date('d M Y', strtotime($application['applied_at']));
 
 sendJsonResponse([
     'status' => true,

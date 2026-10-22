@@ -7,8 +7,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     exit;
 }
 
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'PUT') {
-    header('Allow: PUT, OPTIONS');
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'PUT' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    header('Allow: PUT, POST, OPTIONS');
     sendJsonResponse([
         'status' => false,
         'message' => 'Method not allowed.',
@@ -54,8 +54,8 @@ try {
     $pdo->beginTransaction();
 
     $query = $pdo->prepare(
-        'SELECT id, status
-         FROM leave_applications
+        'SELECT id, user_id, leave_type, from_date, to_date, half_day, status
+         FROM leaves
          WHERE id = :id AND user_id = :user_id
          LIMIT 1
          FOR UPDATE'
@@ -84,17 +84,41 @@ try {
         ], 409);
     }
 
+    // Set to rejected or cancelled (status enum is 'pending','approved','rejected')
     $update = $pdo->prepare(
-        'UPDATE leave_applications
+        'UPDATE leaves
          SET status = :new_status
          WHERE id = :id AND user_id = :user_id AND status = :current_status'
     );
     $update->execute([
-        'new_status' => 'cancelled',
+        'new_status' => 'rejected',
         'id' => $applicationId,
         'user_id' => $userId,
         'current_status' => 'pending',
     ]);
+
+    // Restore leave balance
+    $d1 = new DateTime($application['from_date']);
+    $d2 = new DateTime($application['to_date']);
+    $days = $d1->diff($d2)->days + 1;
+    if ($application['half_day'] !== 'none') {
+        $days = 0.5;
+    }
+    $year = date('Y', strtotime($application['from_date']));
+
+    $restore = $pdo->prepare(
+        'UPDATE leave_balance
+         SET used = GREATEST(0, used - :days_used), remaining = remaining + :days_rem
+         WHERE user_id = :user_id AND leave_type = :leave_type AND year = :year'
+    );
+    $restore->execute([
+        'days_used' => $days,
+        'days_rem' => $days,
+        'user_id' => $userId,
+        'leave_type' => $application['leave_type'],
+        'year' => $year,
+    ]);
+
     $pdo->commit();
 } catch (PDOException $exception) {
     if ($pdo->inTransaction()) {

@@ -17,49 +17,44 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 }
 
 require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../config/auth_check.php';
 
 $rawBody = file_get_contents('php://input');
-try {
-    $input = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
-} catch (JsonException $exception) {
-    sendJsonResponse([
-        'status' => 'error',
-        'message' => 'Request body must be valid JSON.',
-        'data' => null,
-    ], 400);
+$input = [];
+if (!empty($rawBody)) {
+    try {
+        $input = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $e) {
+        sendJsonResponse([
+            'status' => 'error',
+            'message' => 'Request body must be valid JSON.',
+            'data' => null,
+        ], 400);
+    }
 }
 
-if (!is_array($input) || !isset($input['user_id'])) {
+$userId = isset($input['user_id']) ? (int) $input['user_id'] : getAuthenticatedUserId(false);
+if (!$userId || $userId < 1) {
     sendJsonResponse([
         'status' => 'error',
-        'message' => 'user_id is required.',
-        'data' => null,
-    ], 422);
-}
-
-$userId = filter_var($input['user_id'], FILTER_VALIDATE_INT, [
-    'options' => ['min_range' => 1],
-]);
-if ($userId === false) {
-    sendJsonResponse([
-        'status' => 'error',
-        'message' => 'user_id must be a positive integer.',
+        'message' => 'User ID is required.',
         'data' => null,
     ], 422);
 }
 
-$attendanceDate = date('Y-m-d');
-$punchInTime = date('H:i:s');
+$latitude = isset($input['latitude']) ? (float) $input['latitude'] : null;
+$longitude = isset($input['longitude']) ? (float) $input['longitude'] : null;
+$address = isset($input['address']) && is_string($input['address']) ? trim($input['address']) : null;
+
+$today = date('Y-m-d');
+$now = date('Y-m-d H:i:s');
 
 try {
-    $pdo->beginTransaction();
-
-    $userQuery = $pdo->prepare(
-        'SELECT id FROM users WHERE id = :user_id LIMIT 1 FOR UPDATE'
-    );
-    $userQuery->execute(['user_id' => $userId]);
-    if ($userQuery->fetch() === false) {
-        $pdo->rollBack();
+    // 1. Verify user exists
+    $userQuery = $pdo->prepare('SELECT id, full_name, employee_id FROM users WHERE id = :id LIMIT 1');
+    $userQuery->execute(['id' => $userId]);
+    $user = $userQuery->fetch();
+    if (!$user) {
         sendJsonResponse([
             'status' => 'error',
             'message' => 'User not found.',
@@ -67,72 +62,69 @@ try {
         ], 404);
     }
 
-    $existingQuery = $pdo->prepare(
-        'SELECT id FROM attendance
-         WHERE user_id = :user_id AND attendance_date = :attendance_date
-         LIMIT 1'
-    );
-    $existingQuery->execute([
-        'user_id' => $userId,
-        'attendance_date' => $attendanceDate,
-    ]);
-    if ($existingQuery->fetch() !== false) {
-        $pdo->rollBack();
+    // 2. Check for an existing open punch in today
+    $check = $pdo->prepare('
+        SELECT id, punch_in, status
+        FROM attendance
+        WHERE user_id = :user_id AND date = :today AND punch_out IS NULL
+        LIMIT 1
+    ');
+    $check->execute(['user_id' => $userId, 'today' => $today]);
+    $openAttendance = $check->fetch();
+
+    if ($openAttendance) {
+        $clockInFormatted = date('h:i A', strtotime($openAttendance['punch_in']));
         sendJsonResponse([
             'status' => 'error',
-            'message' => 'You have already punched in today.',
-            'data' => null,
+            'message' => 'You are already punched in for today.',
+            'data' => [
+                'id' => (int) $openAttendance['id'],
+                'user_id' => $userId,
+                'date' => $today,
+                'punch_in' => $openAttendance['punch_in'],
+                'clock_in_time' => $clockInFormatted,
+                'is_punched_in' => true,
+                'status' => $openAttendance['status'],
+            ],
         ], 409);
     }
 
-    $insert = $pdo->prepare(
-        'INSERT INTO attendance (user_id, attendance_date, punch_in)
-         VALUES (:user_id, :attendance_date, :punch_in)'
-    );
+    // 3. Insert new attendance record
+    $insert = $pdo->prepare('
+        INSERT INTO attendance (user_id, date, punch_in, status, latitude, longitude, address)
+        VALUES (:user_id, :date, :punch_in, :status, :latitude, :longitude, :address)
+    ');
     $insert->execute([
         'user_id' => $userId,
-        'attendance_date' => $attendanceDate,
-        'punch_in' => $punchInTime,
+        'date' => $today,
+        'punch_in' => $now,
+        'status' => 'punched_in',
+        'latitude' => $latitude,
+        'longitude' => $longitude,
+        'address' => $address,
     ]);
-    $pdo->commit();
-} catch (PDOException $exception) {
-    if ($pdo->inTransaction()) {
-        $pdo->rollBack();
-    }
 
-    if ($exception->getCode() === '23000') {
-        sendJsonResponse([
-            'status' => 'error',
-            'message' => 'You have already punched in today.',
-            'data' => null,
-        ], 409);
-    }
+    $newId = (int) $pdo->lastInsertId();
+    $clockInFormatted = date('h:i A', strtotime($now));
 
-    error_log('Attendance punch-in failed: ' . $exception->getMessage());
+    sendJsonResponse([
+        'status' => 'success',
+        'message' => 'Punched in successfully.',
+        'data' => [
+            'id' => $newId,
+            'user_id' => $userId,
+            'date' => $today,
+            'punch_in' => $now,
+            'clock_in_time' => $clockInFormatted,
+            'is_punched_in' => true,
+            'status' => 'punched_in',
+        ],
+    ], 201);
+} catch (PDOException $e) {
+    error_log('Punch-in failed: ' . $e->getMessage());
     sendJsonResponse([
         'status' => 'error',
-        'message' => 'Unable to record punch-in.',
-        'data' => null,
-    ], 500);
-} catch (Throwable $exception) {
-    if ($pdo->inTransaction()) {
-        $pdo->rollBack();
-    }
-
-    error_log('Attendance punch-in failed: ' . $exception->getMessage());
-    sendJsonResponse([
-        'status' => 'error',
-        'message' => 'Unable to record punch-in.',
+        'message' => 'Unable to record punch in: ' . $e->getMessage(),
         'data' => null,
     ], 500);
 }
-
-sendJsonResponse([
-    'status' => 'success',
-    'message' => 'Punch-in recorded successfully.',
-    'data' => [
-        'user_id' => $userId,
-        'attendance_date' => $attendanceDate,
-        'punch_in_time' => $punchInTime,
-    ],
-], 201);
