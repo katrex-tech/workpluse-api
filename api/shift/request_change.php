@@ -113,6 +113,9 @@ try {
         ]);
     }
 
+    require_once __DIR__ . '/../../config/fcm_helper.php';
+    sendFcmToUsers($pdo, $adminIds, 'New Shift Change Request', "$empName requested a shift change to $shiftName.", ['type' => 'shift_change', 'request_id' => (string)$requestId]);
+
     sendJsonResponse([
         'status' => 'success',
         'message' => 'Shift change request submitted successfully. It will be reviewed by HR/Super Admin.',

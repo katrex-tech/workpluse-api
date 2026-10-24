@@ -237,6 +237,9 @@ try {
             VALUES (?, ?, ?, 0, NOW())
         ");
         $notifStmt->execute([$targetUserId, $notifTitle, $notifMessage]);
+
+        require_once __DIR__ . '/../../config/fcm_helper.php';
+        sendFcmToUsers($pdo, [$targetUserId], $notifTitle, $notifMessage, ['type' => $type, 'id' => (string)$id, 'status' => $statusValue]);
     }
 
     sendJsonResponse([

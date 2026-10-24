@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 require_once __DIR__ . '/../../config/config.php';
 
@@ -145,6 +145,32 @@ try {
         'data' => [],
     ], 500);
 }
+
+    // Create notifications for HRs & Super Admins
+    try {
+        $userStmt = $pdo->prepare("SELECT full_name, employee_id FROM users WHERE id = :id LIMIT 1");
+        $userStmt->execute(['id' => $userId]);
+        $emp = $userStmt->fetch(PDO::FETCH_ASSOC);
+        $empName = $emp ? $emp['full_name'] : 'An employee';
+
+        $adminsStmt = $pdo->query("SELECT id FROM users WHERE role IN ('super_admin', 'hr') AND status = 'active'");
+        $adminIds = $adminsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $notifStmt = $pdo->prepare("
+            INSERT INTO notifications (user_id, title, message, is_read, created_at)
+            VALUES (?, ?, ?, 0, NOW())
+        ");
+        $notifTitle = "New Leave Application 🏖️";
+        $notifMsg = "{$empName} applied for {$leaveType} from {$fromDate} to {$toDate}.";
+        foreach ($adminIds as $adminId) {
+            $notifStmt->execute([(int)$adminId, $notifTitle, $notifMsg]);
+        }
+
+        require_once __DIR__ . '/../../config/fcm_helper.php';
+        sendFcmToUsers($pdo, $adminIds, $notifTitle, $notifMsg, ['type' => 'leave', 'leave_id' => (string)$leaveId]);
+    } catch (Exception $e) {
+        error_log('Failed to create leave notification: ' . $e->getMessage());
+    }
 
 sendJsonResponse([
     'status' => true,

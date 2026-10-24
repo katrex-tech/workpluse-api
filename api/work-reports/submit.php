@@ -65,9 +65,10 @@ if ($userId === false || !$isValidDate($reportDate) || $description === '') {
 }
 
 try {
-    $userQuery = $pdo->prepare('SELECT id FROM users WHERE id = :id LIMIT 1');
+    $userQuery = $pdo->prepare('SELECT id, full_name, employee_id FROM users WHERE id = :id LIMIT 1');
     $userQuery->execute(['id' => $userId]);
-    if ($userQuery->fetch() === false) {
+    $user = $userQuery->fetch(PDO::FETCH_ASSOC);
+    if ($user === false) {
         sendJsonResponse([
             'status' => false,
             'message' => 'User not found.',
@@ -86,6 +87,29 @@ try {
         'status' => 'submitted',
     ]);
     $reportId = (int) $pdo->lastInsertId();
+
+    // Create notifications for HRs & Super Admins
+    try {
+        $empName = $user['full_name'] ?? 'An employee';
+        $adminsStmt = $pdo->query("SELECT id FROM users WHERE role IN ('super_admin', 'hr') AND status = 'active'");
+        $adminIds = $adminsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $notifStmt = $pdo->prepare("
+            INSERT INTO notifications (user_id, title, message, is_read, created_at)
+            VALUES (?, ?, ?, 0, NOW())
+        ");
+        $notifTitle = "Daily Work Report Submitted 📋";
+        $notifMsg = "{$empName} submitted a work report for {$reportDate}.";
+        foreach ($adminIds as $adminId) {
+            $notifStmt->execute([(int)$adminId, $notifTitle, $notifMsg]);
+        }
+
+        require_once __DIR__ . '/../../config/fcm_helper.php';
+        sendFcmToUsers($pdo, $adminIds, $notifTitle, $notifMsg, ['type' => 'work_report', 'report_id' => (string)$reportId]);
+    } catch (Exception $e) {
+        error_log('Failed to create work report notification: ' . $e->getMessage());
+    }
+
 } catch (PDOException $exception) {
     error_log('Work report submission failed: ' . $exception->getMessage());
     sendJsonResponse([
