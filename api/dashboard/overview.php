@@ -33,9 +33,26 @@ $now = time();
 
 try {
     // 1. User Profile
-    $userStmt = $pdo->prepare('SELECT id, employee_id, full_name, email, mobile, role, department, designation, status, date_of_joining, work_location, employment_type, profile_photo, reporting_manager_id FROM users WHERE id = :id LIMIT 1');
+    $userStmt = $pdo->prepare('SELECT id, employee_id, full_name, email, mobile, role, shift_id, department, designation, status, date_of_joining, work_location, employment_type, profile_photo, reporting_manager_id FROM users WHERE id = :id LIMIT 1');
     $userStmt->execute(['id' => $userId]);
     $user = $userStmt->fetch();
+
+    // Fetch assigned shift details
+    $userShiftId = (int) ($user['shift_id'] ?? 1);
+    if ($userShiftId <= 0) $userShiftId = 1;
+    $userShiftStmt = $pdo->prepare('SELECT * FROM shifts WHERE id = :id LIMIT 1');
+    $userShiftStmt->execute(['id' => $userShiftId]);
+    $assignedShift = $userShiftStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$assignedShift) {
+        $assignedShift = $pdo->query('SELECT * FROM shifts ORDER BY id ASC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+    }
+
+    $shiftStartFmt = date('h:i A', strtotime($assignedShift['start_time'] ?? '10:00:00'));
+    $shiftEndFmt = date('h:i A', strtotime($assignedShift['end_time'] ?? '19:00:00'));
+    $lunchStartFmt = date('h:i A', strtotime($assignedShift['lunch_start'] ?? '14:15:00'));
+    $lunchEndFmt = date('h:i A', strtotime($assignedShift['lunch_end'] ?? '14:45:00'));
+    $shiftName = $assignedShift['name'] ?? 'Regular Shift (10 AM - 7 PM)';
+    $shiftTime = "$shiftStartFmt - $shiftEndFmt";
 
     $fullName = $user ? $user['full_name'] : 'Employee';
     $nameParts = explode(' ', trim($fullName));
@@ -278,13 +295,30 @@ try {
                 'on_time' => $onTime,
                 'date_formatted' => date('D, M d, Y'),
                 'shift' => [
-                    'title' => 'Shift: 09:00 - 18:00',
-                    'start' => '09:00',
-                    'end' => '18:00',
+                    'title' => "$shiftName: $shiftTime",
+                    'name' => $shiftName,
+                    'time' => $shiftTime,
+                    'start' => substr($assignedShift['start_time'] ?? '10:00', 0, 5),
+                    'end' => substr($assignedShift['end_time'] ?? '19:00', 0, 5),
                     'total_shift_seconds' => $totalShiftSeconds,
                     'percent_complete' => $percentComplete,
                     'remaining_text' => $remainingText,
                 ],
+            ],
+            'assigned_shift' => [
+                'id' => (int) ($assignedShift['id'] ?? 1),
+                'name' => $shiftName,
+                'shift_name' => $shiftName,
+                'time' => $shiftTime,
+                'shift_time' => $shiftTime,
+                'start_time' => $shiftStartFmt,
+                'end_time' => $shiftEndFmt,
+                'lunch_start' => $lunchStartFmt,
+                'lunch_end' => $lunchEndFmt,
+                'lunch_time' => "$lunchStartFmt - $lunchEndFmt",
+                'personal_break' => "{$assignedShift['personal_break_minutes']} Mins",
+                'personal_break_minutes' => (int) ($assignedShift['personal_break_minutes'] ?? 35),
+                'total_hours' => '9 Hours',
             ],
             'metrics' => [
                 'logged_today' => [

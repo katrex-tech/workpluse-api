@@ -9,7 +9,7 @@ function getAuthenticatedUserId(bool $required = false): ?int
     global $config, $pdo;
 
     $token = null;
-    $headers = getallheaders();
+    $headers = function_exists('getallheaders') ? getallheaders() : [];
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
 
     if (preg_match('/Bearer\s+(\S+)/i', $authHeader, $matches)) {

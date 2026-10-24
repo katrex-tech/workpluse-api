@@ -45,11 +45,19 @@ $mobile = isset($input['mobile']) && is_string($input['mobile']) ? trim($input['
 $department = isset($input['department']) && is_string($input['department']) ? trim($input['department']) : '';
 $designation = isset($input['designation']) && is_string($input['designation']) ? trim($input['designation']) : '';
 $role = isset($input['role']) && is_string($input['role']) ? strtolower(trim($input['role'])) : 'member';
+$shiftId = filter_var($input['shift_id'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: 1;
 $workLocation = isset($input['work_location']) && is_string($input['work_location']) ? trim($input['work_location']) : 'Tech Tower HQ';
 $employmentType = isset($input['employment_type']) && is_string($input['employment_type']) ? trim($input['employment_type']) : 'Full-time';
 $dateOfJoining = isset($input['date_of_joining']) && is_string($input['date_of_joining']) ? trim($input['date_of_joining']) : date('Y-m-d');
+$rawDob = isset($input['dob']) && is_string($input['dob']) ? trim($input['dob']) : '';
 $customPassword = isset($input['password']) && is_string($input['password']) ? trim($input['password']) : '';
 $customEmployeeId = isset($input['employee_id']) && is_string($input['employee_id']) ? trim($input['employee_id']) : '';
+
+// Company Location Coordinates for Geofencing
+$companyLatitude = isset($input['company_latitude']) ? (float)$input['company_latitude'] : (isset($input['registered_lat']) ? (float)$input['registered_lat'] : null);
+$companyLongitude = isset($input['company_longitude']) ? (float)$input['company_longitude'] : (isset($input['registered_lng']) ? (float)$input['registered_lng'] : null);
+$companyAddress = isset($input['company_address']) && is_string($input['company_address']) ? trim($input['company_address']) : (isset($input['registered_address']) ? trim($input['registered_address']) : $workLocation);
+$companyRadius = isset($input['radius_meters']) ? (int)$input['radius_meters'] : 200;
 
 // Validation
 if ($fullName === '' || $email === '' || $mobile === '' || $department === '' || $designation === '') {
@@ -100,6 +108,19 @@ try {
     // Determine password
     $tempPassword = null;
     $mustChangePassword = 0;
+    $dobFormatted = $rawDob;
+    $dobDigits = preg_replace('/\D/', '', $rawDob);
+    if (strlen($dobDigits) === 8) {
+        if ((int)substr($dobDigits, 0, 4) > 1900 && (int)substr($dobDigits, 4, 2) <= 12) {
+            $yyyy = substr($dobDigits, 0, 4);
+            $mm = substr($dobDigits, 4, 2);
+            $dd = substr($dobDigits, 6, 2);
+            $dobFormatted = "$dd$mm$yyyy";
+        } else {
+            $dobFormatted = $dobDigits;
+        }
+    }
+
     if ($customPassword !== '') {
         if (strlen($customPassword) < 6) {
             sendJsonResponse([
@@ -108,6 +129,11 @@ try {
             ], 422);
         }
         $finalPassword = $customPassword;
+    } elseif ($dobFormatted !== '') {
+        // User requested DOB in ddmmyyyy format as default initial password
+        $finalPassword = $dobFormatted;
+        $tempPassword = $dobFormatted;
+        $mustChangePassword = 0;
     } else {
         // Auto-generate secure temporary password (e.g. WP@8291)
         $tempPassword = 'WP@' . random_int(1000, 9999);
@@ -137,9 +163,14 @@ try {
             department,
             designation,
             role,
+            shift_id,
             employment_type,
             date_of_joining,
+            dob,
             work_location,
+            registered_lat,
+            registered_lng,
+            registered_address,
             reporting_manager_id,
             status,
             must_change_password
@@ -153,9 +184,14 @@ try {
             :department,
             :designation,
             :role,
+            :shift_id,
             :employment_type,
             :date_of_joining,
+            :dob,
             :work_location,
+            :registered_lat,
+            :registered_lng,
+            :registered_address,
             :reporting_manager_id,
             :status,
             :must_change_password
@@ -172,15 +208,41 @@ try {
         'department' => $department,
         'designation' => $designation,
         'role' => $role,
+        'shift_id' => $shiftId,
         'employment_type' => $employmentType,
         'date_of_joining' => $dateOfJoining,
+        'dob' => $dobFormatted,
         'work_location' => $workLocation,
+        'registered_lat' => $companyLatitude,
+        'registered_lng' => $companyLongitude,
+        'registered_address' => $companyAddress,
         'reporting_manager_id' => (int) $caller['id'],
         'status' => 'active',
         'must_change_password' => $mustChangePassword,
     ]);
 
     $newUserId = (int) $pdo->lastInsertId();
+
+    // If company location coordinates provided, update company_locations table
+    if ($companyLatitude !== null && $companyLongitude !== null) {
+        try {
+            $compUpdate = $pdo->prepare('
+                UPDATE company_locations 
+                SET latitude = :lat, longitude = :lng, address = :addr, radius_meters = :radius, is_active = 1
+                WHERE id = 1
+            ');
+            $compUpdate->execute([
+                'lat' => $companyLatitude,
+                'lng' => $companyLongitude,
+                'addr' => $companyAddress,
+                'radius' => $companyRadius,
+            ]);
+        } catch (_) {}
+    }
+
+    // Fetch assigned shift details for response
+    $shiftDetails = $pdo->query("SELECT name, start_time, end_time FROM shifts WHERE id = $shiftId")->fetch(PDO::FETCH_ASSOC);
+    $shiftName = $shiftDetails ? $shiftDetails['name'] : 'Regular Shift (10 AM - 7 PM)';
 
     // Initialize default leave balance for new employee
     try {
@@ -208,6 +270,8 @@ try {
             'department' => $department,
             'designation' => $designation,
             'role' => $role,
+            'shift_id' => $shiftId,
+            'shift_name' => $shiftName,
             'temp_password' => $tempPassword ?? $finalPassword,
             'must_change_password' => (bool) $mustChangePassword,
             'created_by' => [

@@ -50,8 +50,55 @@ try {
         ];
     }
 
-    // Role-based privilege: If role is super_admin or hr, prepend Employee Onboarding!
+    // Check if 'my_shift' is in modules, if not add it
+    $hasMyShift = false;
+    foreach ($modules as $m) {
+        if ($m['module_key'] === 'my_shift') {
+            $hasMyShift = true;
+            break;
+        }
+    }
+    if (!$hasMyShift) {
+        array_splice($modules, 1, 0, [[
+            'id' => 12,
+            'module_key' => 'my_shift',
+            'title' => 'My Shift',
+            'subtitle' => 'Assigned Shift, Lunch & Break Timer',
+            'icon' => 'schedule',
+            'color' => '#00B4A0',
+            'route' => 'my_shift',
+            'badge' => 'ACTIVE',
+            'is_active' => true,
+            'sort_order' => 2,
+        ]]);
+    }
+
+    // Role-based privilege: If role is super_admin or hr, prepend Employee Onboarding and Admin Approvals!
     if ($role === 'super_admin' || $role === 'hr') {
+        // Pending approval count
+        $cntPending = 0;
+        try {
+            $c1 = (int)$pdo->query("SELECT COUNT(*) FROM shift_change_requests WHERE status = 'pending'")->fetchColumn();
+            $c2 = (int)$pdo->query("SELECT COUNT(*) FROM attendance_regularization_requests WHERE status = 'pending'")->fetchColumn();
+            $c3 = (int)$pdo->query("SELECT COUNT(*) FROM leaves WHERE status = 'pending'")->fetchColumn();
+            $c4 = (int)$pdo->query("SELECT COUNT(*) FROM work_reports WHERE status = 'pending' OR status = 'submitted'")->fetchColumn();
+            $c5 = (int)$pdo->query("SELECT COUNT(*) FROM face_change_requests WHERE status = 'pending'")->fetchColumn();
+            $cntPending = $c1 + $c2 + $c3 + $c4 + $c5;
+        } catch (_) {}
+
+        array_unshift($modules, [
+            'id' => 998,
+            'module_key' => 'admin_approvals',
+            'title' => 'Admin Approvals',
+            'subtitle' => 'Missing Attendance, Leaves, Reports & Shifts',
+            'icon' => 'admin_panel_settings',
+            'color' => '#E53935',
+            'route' => 'admin_approvals',
+            'badge' => $cntPending > 0 ? "$cntPending PENDING" : 'ADMIN',
+            'is_active' => true,
+            'sort_order' => -1,
+        ]);
+
         array_unshift($modules, [
             'id' => 999,
             'module_key' => 'onboarding',
@@ -62,7 +109,7 @@ try {
             'route' => 'employee_onboarding',
             'badge' => strtoupper($role),
             'is_active' => true,
-            'sort_order' => 0,
+            'sort_order' => -2,
         ]);
     }
 
