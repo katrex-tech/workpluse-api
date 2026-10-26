@@ -118,6 +118,7 @@ sendJsonResponse([
         'role' => $user['role'] ?? 'member',
         'department' => $user['department'] ?? 'General',
         'designation' => $user['designation'] ?? 'Staff',
+        'profile_photo' => formatMediaUrl($user['profile_photo'] ?? null),
         'must_change_password' => (bool) ($user['must_change_password'] ?? false),
     ],
 ]);

@@ -52,6 +52,16 @@ $dateOfJoining = isset($input['date_of_joining']) && is_string($input['date_of_j
 $rawDob = isset($input['dob']) && is_string($input['dob']) ? trim($input['dob']) : '';
 $customPassword = isset($input['password']) && is_string($input['password']) ? trim($input['password']) : '';
 $customEmployeeId = isset($input['employee_id']) && is_string($input['employee_id']) ? trim($input['employee_id']) : '';
+$reportingManagerId = isset($input['reporting_manager_id']) ? (int)$input['reporting_manager_id'] : (int)$caller['id'];
+
+// Emergency Contacts & Payroll/Banking Details
+$emergencyContactName = isset($input['emergency_contact_name']) && is_string($input['emergency_contact_name']) ? trim($input['emergency_contact_name']) : '';
+$emergencyContactPhone = isset($input['emergency_contact_phone']) && is_string($input['emergency_contact_phone']) ? trim($input['emergency_contact_phone']) : '';
+$annualCtc = isset($input['annual_ctc']) && is_string($input['annual_ctc']) ? trim($input['annual_ctc']) : '';
+$monthlyInHand = isset($input['monthly_in_hand']) && is_string($input['monthly_in_hand']) ? trim($input['monthly_in_hand']) : '';
+$bankName = isset($input['bank_name']) && is_string($input['bank_name']) ? trim($input['bank_name']) : '';
+$accountNumber = isset($input['account_number']) && is_string($input['account_number']) ? trim($input['account_number']) : '';
+$ifscCode = isset($input['ifsc_code']) && is_string($input['ifsc_code']) ? trim($input['ifsc_code']) : '';
 
 // Company Location Coordinates for Geofencing
 $companyLatitude = isset($input['company_latitude']) ? (float)$input['company_latitude'] : (isset($input['registered_lat']) ? (float)$input['registered_lat'] : null);
@@ -173,7 +183,14 @@ try {
             registered_address,
             reporting_manager_id,
             status,
-            must_change_password
+            must_change_password,
+            emergency_contact_name,
+            emergency_contact_phone,
+            annual_ctc,
+            monthly_in_hand,
+            bank_name,
+            account_number,
+            ifsc_code
         ) VALUES (
             :employee_id,
             :full_name,
@@ -194,7 +211,14 @@ try {
             :registered_address,
             :reporting_manager_id,
             :status,
-            :must_change_password
+            :must_change_password,
+            :emergency_contact_name,
+            :emergency_contact_phone,
+            :annual_ctc,
+            :monthly_in_hand,
+            :bank_name,
+            :account_number,
+            :ifsc_code
         )
     ');
 
@@ -216,9 +240,16 @@ try {
         'registered_lat' => $companyLatitude,
         'registered_lng' => $companyLongitude,
         'registered_address' => $companyAddress,
-        'reporting_manager_id' => (int) $caller['id'],
+        'reporting_manager_id' => $reportingManagerId,
         'status' => 'active',
         'must_change_password' => $mustChangePassword,
+        'emergency_contact_name' => $emergencyContactName,
+        'emergency_contact_phone' => $emergencyContactPhone,
+        'annual_ctc' => $annualCtc,
+        'monthly_in_hand' => $monthlyInHand,
+        'bank_name' => $bankName,
+        'account_number' => $accountNumber,
+        'ifsc_code' => $ifscCode,
     ]);
 
     $newUserId = (int) $pdo->lastInsertId();

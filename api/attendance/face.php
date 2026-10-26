@@ -24,7 +24,7 @@ if ($method === 'GET') {
 
     try {
         $stmt = $pdo->prepare('
-            SELECT id, employee_id, full_name, face_registered, face_registered_at, 
+            SELECT id, employee_id, full_name, profile_photo, face_registered, face_data, face_registered_at, 
                    registered_lat, registered_lng, registered_address,
                    CASE WHEN face_data IS NOT NULL AND LENGTH(face_data) > 0 THEN 1 ELSE 0 END AS has_face_data
             FROM users
@@ -42,6 +42,23 @@ if ($method === 'GET') {
             ], 404);
         }
 
+        $faceImageUrl = null;
+        if (!empty($user['face_data'])) {
+            if (str_starts_with($user['face_data'], 'uploads/') || str_starts_with($user['face_data'], 'http')) {
+                $faceImageUrl = formatMediaUrl($user['face_data']);
+            } elseif (str_starts_with($user['face_data'], 'data:image')) {
+                $faceImageUrl = $user['face_data'];
+            }
+        }
+        if ($faceImageUrl === null && !empty($user['profile_photo'])) {
+            $faceImageUrl = formatMediaUrl($user['profile_photo']);
+        }
+
+        // Check for pending face change request
+        $pendingReqStmt = $pdo->prepare("SELECT id, reason, created_at FROM face_change_requests WHERE user_id = :id AND status = 'pending' ORDER BY id DESC LIMIT 1");
+        $pendingReqStmt->execute(['id' => $userId]);
+        $pendingReq = $pendingReqStmt->fetch(PDO::FETCH_ASSOC);
+
         sendJsonResponse([
             'status' => 'success',
             'message' => 'Face registration details retrieved successfully.',
@@ -55,6 +72,9 @@ if ($method === 'GET') {
                 'registered_lng' => $user['registered_lng'] !== null ? (float) $user['registered_lng'] : null,
                 'registered_address' => $user['registered_address'],
                 'has_face_data' => (bool) $user['has_face_data'],
+                'face_image_url' => $faceImageUrl,
+                'pending_face_change_request' => $pendingReq ? true : false,
+                'pending_request_details' => $pendingReq ?: null,
             ],
         ]);
     } catch (PDOException $e) {
@@ -138,6 +158,37 @@ if ($method === 'GET') {
     $address = isset($input['address']) && is_string($input['address']) ? trim($input['address']) : null;
     $now = date('Y-m-d H:i:s');
 
+    // If faceData contains base64 image data, persist as image file
+    $faceUploadDir = __DIR__ . '/../../uploads/face_photos';
+    if (!is_dir($faceUploadDir)) {
+        @mkdir($faceUploadDir, 0777, true);
+    }
+
+    $savedFacePath = null;
+    if (is_string($faceData)) {
+        if (preg_match('/^data:image\/(\w+);base64,/', $faceData, $matches)) {
+            $imgRaw = substr($faceData, strpos($faceData, ',') + 1);
+            $ext = strtolower($matches[1]) === 'png' ? 'png' : 'jpg';
+            $decoded = base64_decode($imgRaw, true);
+            if ($decoded !== false) {
+                $fname = 'face_' . $userId . '_' . time() . '.' . $ext;
+                if (file_put_contents($faceUploadDir . DIRECTORY_SEPARATOR . $fname, $decoded) !== false) {
+                    $savedFacePath = 'uploads/face_photos/' . $fname;
+                    $faceData = $savedFacePath;
+                }
+            }
+        } elseif (strlen($faceData) > 500 && !str_starts_with($faceData, 'http') && !str_starts_with($faceData, 'uploads/')) {
+            $decoded = base64_decode($faceData, true);
+            if ($decoded !== false) {
+                $fname = 'face_' . $userId . '_' . time() . '.jpg';
+                if (file_put_contents($faceUploadDir . DIRECTORY_SEPARATOR . $fname, $decoded) !== false) {
+                    $savedFacePath = 'uploads/face_photos/' . $fname;
+                    $faceData = $savedFacePath;
+                }
+            }
+        }
+    }
+
     try {
         $update = $pdo->prepare('
             UPDATE users
@@ -168,6 +219,7 @@ if ($method === 'GET') {
                 'registered_lat' => $latitude,
                 'registered_lng' => $longitude,
                 'registered_address' => $address,
+                'face_image_url' => formatMediaUrl($faceData),
             ],
         ], 200);
     } catch (PDOException $e) {

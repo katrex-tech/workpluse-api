@@ -168,7 +168,7 @@ try {
             'department' => !empty($m['department']) ? $m['department'] : 'General',
             'role' => $m['role'] ?? 'member',
             'status' => $m['status'] ?? 'active',
-            'profile_photo' => $m['profile_photo'] ?? null,
+            'profile_photo' => formatMediaUrl($m['profile_photo'] ?? null),
             'initials' => $mInitials,
         ];
     }
@@ -280,7 +280,7 @@ try {
                 'date_of_joining' => $user['date_of_joining'] ?? null,
                 'work_location' => $user['work_location'] ?? 'HQ Office',
                 'employment_type' => $user['employment_type'] ?? 'Full-Time',
-                'profile_photo' => $user['profile_photo'] ?? null,
+                'profile_photo' => formatMediaUrl($user['profile_photo'] ?? null),
                 'initials' => $initials,
             ],
             'unread_notifications' => $unreadCount,

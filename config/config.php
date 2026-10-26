@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('Asia/Kolkata');
 
 $config = [
     'environment' => 'local',
@@ -30,6 +31,24 @@ if (!function_exists('sendJsonResponse')) {
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
         );
         exit;
+    }
+}
+
+if (!function_exists('formatMediaUrl')) {
+    function formatMediaUrl(?string $path): ?string
+    {
+        if ($path === null || trim($path) === '') {
+            return null;
+        }
+        $trimmed = trim($path);
+        if (str_starts_with($trimmed, 'http://') || str_starts_with($trimmed, 'https://') || str_starts_with($trimmed, 'data:')) {
+            return $trimmed;
+        }
+
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? '192.168.1.16';
+        $cleanPath = ltrim($trimmed, '/');
+        return "$scheme://$host/workpulse-api/$cleanPath";
     }
 }
 

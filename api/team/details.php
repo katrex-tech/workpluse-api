@@ -81,6 +81,7 @@ if (empty($teamMember['designation'])) {
 if (empty($teamMember['department'])) {
     $teamMember['department'] = 'Engineering';
 }
+$teamMember['profile_photo'] = formatMediaUrl($teamMember['profile_photo'] ?? null);
 
 sendJsonResponse([
     'status' => true,

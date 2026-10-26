@@ -70,6 +70,7 @@ foreach ($teamMembers as &$member) {
     if (empty($member['department'])) {
         $member['department'] = 'Engineering';
     }
+    $member['profile_photo'] = formatMediaUrl($member['profile_photo'] ?? null);
 }
 unset($member);
 

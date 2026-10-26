@@ -71,6 +71,20 @@ try {
         ]);
     }
 
+    // Dispatch FCM Push Notification with Sound to HR & Super Admin
+    require_once __DIR__ . '/../../config/fcm_helper.php';
+    sendFcmToUsers(
+        $pdo,
+        $adminIds,
+        'Face Change Request 📸',
+        "$empName requested face biometrics reset. Reason: $reason",
+        [
+            'type' => 'face_change',
+            'id' => (string) $requestId,
+            'user_id' => (string) $userId,
+        ]
+    );
+
     sendJsonResponse([
         'status' => 'success',
         'message' => 'Face change request submitted successfully. Once approved by HR, you can scan a new face.',
