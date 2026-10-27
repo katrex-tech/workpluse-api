@@ -1,0 +1,72 @@
+version: '3.7'
+
+# ==============================================================================
+# Exadel CompreFace: Free, Self-Hosted Face Recognition and Verification Service
+# Documentation: https://github.com/exadel-inc/CompreFace
+# ==============================================================================
+
+services:
+  compreface-postgres-db:
+    image: postgres:11.5-alpine
+    container_name: "compreface-postgres-db"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-compreface}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-compreface}
+      - POSTGRES_DB=${POSTGRES_DB:-compreface}
+    volumes:
+      - compreface-postgres-data:/var/lib/postgresql/data
+    restart: always
+
+  compreface-admin:
+    image: exadel/compreface-admin:1.2.0
+    container_name: "compreface-admin"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-compreface}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-compreface}
+      - POSTGRES_URL=jdbc:postgresql://compreface-postgres-db:5432/${POSTGRES_DB:-compreface}
+      - SPRING_PROFILES_ACTIVE=dev
+      - ENABLE_EMAIL_VERIFICATION=${ENABLE_EMAIL_VERIFICATION:-false}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10MB}
+    depends_on:
+      - compreface-postgres-db
+    restart: always
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    container_name: "compreface-api"
+    depends_on:
+      - compreface-postgres-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-compreface}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-compreface}
+      - POSTGRES_URL=jdbc:postgresql://compreface-postgres-db:5432/${POSTGRES_DB:-compreface}
+      - SPRING_PROFILES_ACTIVE=dev
+      - SAVE_IMAGES_TO_DB=${SAVE_IMAGES_TO_DB:-false}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10MB}
+      - CONNECTION_TIMEOUT=${CONNECTION_TIMEOUT:-10000}
+      - READ_TIMEOUT=${READ_TIMEOUT:-60000}
+    restart: always
+
+  compreface-fe:
+    image: exadel/compreface-fe:1.2.0
+    container_name: "compreface-ui"
+    ports:
+      - "8000:80"
+    depends_on:
+      - compreface-api
+      - compreface-admin
+    environment:
+      - CLIENT_MAX_BODY_SIZE=${CLIENT_MAX_BODY_SIZE:-10M}
+      - PROXY_READ_TIMEOUT=${PROXY_READ_TIMEOUT:-60000}
+      - PROXY_CONNECT_TIMEOUT=${PROXY_CONNECT_TIMEOUT:-10000}
+    restart: always
+
+  compreface-core:
+    image: exadel/compreface-core:1.2.0
+    container_name: "compreface-core"
+    environment:
+      - ML_PORT=3000
+    restart: always
+
+volumes:
+  compreface-postgres-data:

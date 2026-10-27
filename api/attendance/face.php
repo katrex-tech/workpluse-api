@@ -9,6 +9,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
 
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../config/auth_check.php';
+require_once __DIR__ . '/../../config/compreface_service.php';
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -25,7 +26,8 @@ if ($method === 'GET') {
     try {
         $stmt = $pdo->prepare('
             SELECT id, employee_id, full_name, profile_photo, face_registered, face_data, face_registered_at, 
-                   registered_lat, registered_lng, registered_address,
+                   registered_lat, registered_lng, registered_address, compreface_image_id, compreface_subject,
+                   face_consent_given, face_consent_at,
                    CASE WHEN face_data IS NOT NULL AND LENGTH(face_data) > 0 THEN 1 ELSE 0 END AS has_face_data
             FROM users
             WHERE id = :id
@@ -43,11 +45,23 @@ if ($method === 'GET') {
         }
 
         $faceImageUrl = null;
+        $biometricProfile = null;
         if (!empty($user['face_data'])) {
-            if (str_starts_with($user['face_data'], 'uploads/') || str_starts_with($user['face_data'], 'http')) {
-                $faceImageUrl = formatMediaUrl($user['face_data']);
-            } elseif (str_starts_with($user['face_data'], 'data:image')) {
-                $faceImageUrl = $user['face_data'];
+            $rawFaceData = trim($user['face_data']);
+            if (str_starts_with($rawFaceData, '{')) {
+                $decoded = json_decode($rawFaceData, true);
+                if (is_array($decoded)) {
+                    if (!empty($decoded['image_path'])) {
+                        $faceImageUrl = formatMediaUrl($decoded['image_path']);
+                    }
+                    if (!empty($decoded['biometric_profile'])) {
+                        $biometricProfile = $decoded['biometric_profile'];
+                    }
+                }
+            } elseif (str_starts_with($rawFaceData, 'uploads/') || str_starts_with($rawFaceData, 'http')) {
+                $faceImageUrl = formatMediaUrl($rawFaceData);
+            } elseif (str_starts_with($rawFaceData, 'data:image')) {
+                $faceImageUrl = $rawFaceData;
             }
         }
         if ($faceImageUrl === null && !empty($user['profile_photo'])) {
@@ -72,6 +86,11 @@ if ($method === 'GET') {
                 'registered_lng' => $user['registered_lng'] !== null ? (float) $user['registered_lng'] : null,
                 'registered_address' => $user['registered_address'],
                 'has_face_data' => (bool) $user['has_face_data'],
+                'biometric_profile' => $biometricProfile,
+                'compreface_image_id' => $user['compreface_image_id'] ?? null,
+                'compreface_enrolled' => !empty($user['compreface_image_id']),
+                'face_consent_given' => (bool) ($user['face_consent_given'] ?? false),
+                'face_consent_at' => $user['face_consent_at'] ?? null,
                 'face_image_url' => $faceImageUrl,
                 'pending_face_change_request' => $pendingReq ? true : false,
                 'pending_request_details' => $pendingReq ?: null,
@@ -113,10 +132,28 @@ if ($method === 'GET') {
 
     if ($action === 'delete') {
         try {
+            $cfStmt = $pdo->prepare('SELECT compreface_subject, compreface_image_id FROM users WHERE id = :id LIMIT 1');
+            $cfStmt->execute(['id' => $userId]);
+            $oldRow = $cfStmt->fetch(PDO::FETCH_ASSOC);
+            $subToDelete = $oldRow['compreface_subject'] ?? $oldRow['compreface_image_id'] ?? (string) $userId;
+
+            if ($subToDelete) {
+                try {
+                    $cfService = new CompreFaceService($config);
+                    $cfService->deleteFace($subToDelete);
+                } catch (Exception $e) {
+                    error_log('Failed to delete CompreFace face: ' . $e->getMessage());
+                }
+            }
+
             $update = $pdo->prepare('
                 UPDATE users
                 SET face_registered = 0,
                     face_data = NULL,
+                    compreface_image_id = NULL,
+                    compreface_subject = NULL,
+                    face_consent_given = 0,
+                    face_consent_at = NULL,
                     face_registered_at = NULL,
                     registered_lat = NULL,
                     registered_lng = NULL,
@@ -189,11 +226,23 @@ if ($method === 'GET') {
         }
     }
 
+    $cfSubject = (string) $userId;
+    if ($savedFacePath && file_exists(__DIR__ . '/../../' . $savedFacePath)) {
+        try {
+            $cfService = new CompreFaceService($config);
+            $cfService->addFace(__DIR__ . '/../../' . $savedFacePath, $cfSubject);
+        } catch (Exception $e) {
+            error_log('CompreFace enrollment in face.php warning: ' . $e->getMessage());
+        }
+    }
+
     try {
         $update = $pdo->prepare('
             UPDATE users
             SET face_registered = 1,
                 face_data = :face_data,
+                compreface_image_id = :cf_img_id,
+                compreface_subject = :cf_sub,
                 face_registered_at = :face_registered_at,
                 registered_lat = :latitude,
                 registered_lng = :longitude,
@@ -202,6 +251,8 @@ if ($method === 'GET') {
         ');
         $update->execute([
             'face_data' => $faceData,
+            'cf_img_id' => $cfSubject,
+            'cf_sub' => $cfSubject,
             'face_registered_at' => $now,
             'latitude' => $latitude,
             'longitude' => $longitude,
@@ -242,10 +293,26 @@ if ($method === 'GET') {
     }
 
     try {
+        $cfStmt = $pdo->prepare('SELECT compreface_image_id FROM users WHERE id = :id LIMIT 1');
+        $cfStmt->execute(['id' => $userId]);
+        $oldImgId = $cfStmt->fetchColumn();
+        if ($oldImgId) {
+            try {
+                $cfService = new CompreFaceService($config);
+                $cfService->deleteFace($oldImgId);
+            } catch (Exception $e) {
+                error_log('Failed to delete CompreFace face: ' . $e->getMessage());
+            }
+        }
+
         $update = $pdo->prepare('
             UPDATE users
             SET face_registered = 0,
                 face_data = NULL,
+                compreface_image_id = NULL,
+                compreface_subject = NULL,
+                face_consent_given = 0,
+                face_consent_at = NULL,
                 face_registered_at = NULL,
                 registered_lat = NULL,
                 registered_lng = NULL,

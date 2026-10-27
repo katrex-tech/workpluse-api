@@ -143,7 +143,7 @@ if ($file && isset($file['tmp_name']) && is_uploaded_file($file['tmp_name'])) {
 $relativePath = 'uploads/profile_photos/' . $savedFilename;
 
 $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? '192.168.1.16';
+$host = $_SERVER['HTTP_HOST'] ?? '192.168.1.17';
 $fullUrl = "$scheme://$host/workpulse-api/$relativePath";
 
 try {
