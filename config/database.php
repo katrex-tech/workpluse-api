@@ -25,7 +25,7 @@ try {
     error_log('Database connection failed: ' . $exception->getMessage());
     sendJsonResponse([
         'status' => false,
-        'message' => 'Database connection failed.',
+        'message' => 'Database connection failed: ' . $exception->getMessage() . '. Please verify database name, user, and password in config/config.php or .env on the server.',
         'data' => [],
     ], 500);
 }

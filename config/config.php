@@ -1,16 +1,42 @@
 <?php
 date_default_timezone_set('Asia/Kolkata');
 
+// 1. Automatically load .env file if present in api root
+$envFile = __DIR__ . '/../.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || strpos($line, '#') === 0) continue;
+        if (strpos($line, '=') !== false) {
+            list($key, $val) = explode('=', $line, 2);
+            $key = trim($key);
+            $val = trim($val, " \t\n\r\0\x0B\"'");
+            putenv("$key=$val");
+            $_ENV[$key] = $val;
+            $_SERVER[$key] = $val;
+        }
+    }
+}
+
+// 2. Database configuration with environment variable fallbacks
+$isHostinger = (isset($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], 'lovyamdelights.com') !== false);
+
+$dbHost = getenv('DB_HOST') ?: 'localhost';
+$dbName = getenv('DB_NAME') ?: ($isHostinger ? 'u618843924_workpulse' : 'workpulse');
+$dbUser = getenv('DB_USER') ?: ($isHostinger ? 'u618843924_workpulse' : 'root');
+$dbPass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : '';
+
 $config = [
-    'environment' => 'local',
+    'environment' => getenv('APP_ENV') ?: ($isHostinger ? 'production' : 'local'),
     'database' => [
-        'host' => 'localhost',
-        'name' => 'workpulse',
-        'user' => 'root',
-        'password' => '',
+        'host' => $dbHost,
+        'name' => $dbName,
+        'user' => $dbUser,
+        'password' => $dbPass,
         'charset' => 'utf8mb4',
     ],
-    'jwt_secret' => 'workpulse_secret_key_12345',
+    'jwt_secret' => getenv('JWT_SECRET') ?: 'workpulse_secret_key_12345',
     'jwt_expire' => 7 * 24 * 60 * 60,
     'compreface' => [
         'url' => getenv('COMPREFACE_URL') ?: 'http://127.0.0.1:8000',
@@ -73,7 +99,7 @@ if (!function_exists('formatMediaUrl')) {
         }
 
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? '192.168.1.17';
+        $host = $_SERVER['HTTP_HOST'] ?? 'lovyamdelights.com';
         $cleanPath = ltrim($trimmed, '/');
         return "$scheme://$host/workpulse-api/$cleanPath";
     }
