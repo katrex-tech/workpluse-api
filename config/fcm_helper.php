@@ -173,7 +173,9 @@ function getGoogleOAuthToken(array $serviceAccount): ?string
     return $json['access_token'] ?? null;
 }
 
-function base64UrlEncode(string $data): string
-{
-    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+if (!function_exists('base64UrlEncode')) {
+    function base64UrlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
 }

@@ -61,7 +61,8 @@ $now = date('Y-m-d H:i:s');
 try {
     // 1. Verify user exists and check face registration status
     $userQuery = $pdo->prepare('
-        SELECT id, full_name, employee_id, face_registered, face_data, compreface_image_id, compreface_subject,
+        SELECT id, full_name, employee_id, role, is_field_sales, face_registered, face_data, compreface_image_id, compreface_subject,
+               base_lat, base_lng, base_address,
                registered_lat, registered_lng, registered_address, work_location 
         FROM users 
         WHERE id = :id 
@@ -197,16 +198,28 @@ try {
         ], 403);
     }
 
-    // 4. Geofence Verification against assigned employee workplace coordinates or company location
-    $targetLat = null;
-    $targetLng = null;
-    $targetName = null;
-    $allowedRadius = 200;
+    // 4. Geofence Verification & Field Sales 5 KM Rule
+    if ($latitude === null || $longitude === null) {
+        sendJsonResponse([
+            'status' => 'error',
+            'error_code' => 'LOCATION_REQUIRED',
+            'message' => 'GPS Location coordinates are required for attendance verification.',
+            'data' => null,
+        ], 422);
+    }
+
+    $isFieldSales = !empty($user['is_field_sales']) || strtolower($user['role'] ?? '') === 'sales_executive';
+
+    // Find office coordinates
+    $officeLat = null;
+    $officeLng = null;
+    $officeName = 'Company Office';
+    $officeRadius = 200;
 
     if (!empty($user['registered_lat']) && !empty($user['registered_lng'])) {
-        $targetLat = (float) $user['registered_lat'];
-        $targetLng = (float) $user['registered_lng'];
-        $targetName = !empty($user['work_location']) ? $user['work_location'] : (!empty($user['registered_address']) ? $user['registered_address'] : 'Assigned Workplace');
+        $officeLat = (float) $user['registered_lat'];
+        $officeLng = (float) $user['registered_lng'];
+        $officeName = !empty($user['work_location']) ? $user['work_location'] : (!empty($user['registered_address']) ? $user['registered_address'] : 'Assigned Workplace');
     } else {
         $companyStmt = $pdo->query('
             SELECT id, name, address, latitude, longitude, radius_meters 
@@ -217,47 +230,119 @@ try {
         ');
         $companyLoc = $companyStmt->fetch();
         if ($companyLoc && $companyLoc['latitude'] !== null && $companyLoc['longitude'] !== null) {
-            $targetLat = (float) $companyLoc['latitude'];
-            $targetLng = (float) $companyLoc['longitude'];
-            $targetName = $companyLoc['name'];
-            $allowedRadius = (int) ($companyLoc['radius_meters'] ?? 200);
+            $officeLat = (float) $companyLoc['latitude'];
+            $officeLng = (float) $companyLoc['longitude'];
+            $officeName = $companyLoc['name'];
+            $officeRadius = (int) ($companyLoc['radius_meters'] ?? 200);
         }
     }
 
-    if ($targetLat !== null && $targetLng !== null) {
-        if ($latitude === null || $longitude === null) {
-            sendJsonResponse([
-                'status' => 'error',
-                'error_code' => 'LOCATION_REQUIRED',
-                'message' => 'GPS Location coordinates are required for attendance verification.',
-                'data' => null,
-            ], 422);
+    if ($isFieldSales) {
+        // Field Sales Logic:
+        // A) If punching in from office location -> Allowed!
+        // B) If outside office:
+        //    - Must have registered home address
+        //    - Remove 200m office restriction
+        //    - Must NOT be within 5 KM of registered home address
+
+        $isAtOffice = false;
+        if ($officeLat !== null && $officeLng !== null) {
+            $earthRadius = 6371000;
+            $dLat = deg2rad($latitude - $officeLat);
+            $dLon = deg2rad($longitude - $officeLng);
+            $a = sin($dLat / 2) * sin($dLat / 2) +
+                 cos(deg2rad($officeLat)) * cos(deg2rad($latitude)) *
+                 sin($dLon / 2) * sin($dLon / 2);
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+            $distOfficeMeters = round($earthRadius * $c);
+
+            if ($distOfficeMeters <= $officeRadius) {
+                $isAtOffice = true;
+            }
         }
 
-        $earthRadius = 6371000; // in meters
-        $dLat = deg2rad($latitude - $targetLat);
-        $dLon = deg2rad($longitude - $targetLng);
-        $a = sin($dLat / 2) * sin($dLat / 2) +
-             cos(deg2rad($targetLat)) * cos(deg2rad($latitude)) *
-             sin($dLon / 2) * sin($dLon / 2);
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-        $distanceMeters = round($earthRadius * $c);
+        if (!$isAtOffice) {
+            $homeLat = !empty($user['base_lat']) ? (float)$user['base_lat'] : null;
+            $homeLng = !empty($user['base_lng']) ? (float)$user['base_lng'] : null;
 
-        if ($distanceMeters > $allowedRadius) {
-            sendJsonResponse([
-                'status' => 'error',
-                'error_code' => 'OUT_OF_RANGE',
-                'message' => "You are out of range ({$distanceMeters}m away). Allowed radius is {$allowedRadius}m from {$targetName}. Please go to your assigned work location.",
-                'data' => [
-                    'distance_meters' => $distanceMeters,
-                    'allowed_radius_meters' => $allowedRadius,
-                    'company_name' => $targetName,
-                    'company_latitude' => $targetLat,
-                    'company_longitude' => $targetLng,
-                    'user_latitude' => $latitude,
-                    'user_longitude' => $longitude,
-                ],
-            ], 403);
+            if ($homeLat === null || $homeLng === null) {
+                sendJsonResponse([
+                    'status' => 'error',
+                    'error_code' => 'HOME_ADDRESS_REQUIRED',
+                    'message' => 'Please register your home address first and get it approved by Admin/HR before punching in.',
+                    'data' => [
+                        'is_field_sales' => true,
+                        'needs_home_address' => true,
+                    ],
+                ], 403);
+            }
+
+            // Calculate distance from registered home in KM
+            $earthRadiusKm = 6371.0;
+            $dLat = deg2rad($latitude - $homeLat);
+            $dLon = deg2rad($longitude - $homeLng);
+            $a = sin($dLat / 2) * sin($dLat / 2) +
+                 cos(deg2rad($homeLat)) * cos(deg2rad($latitude)) *
+                 sin($dLon / 2) * sin($dLon / 2);
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+            $distFromHomeKm = round($earthRadiusKm * $c, 2);
+
+            if ($distFromHomeKm < 5.0) {
+                // Record geofence violation alert
+                try {
+                    $alertStmt = $pdo->prepare('
+                        INSERT INTO sales_location_alerts (user_id, alert_type, latitude, longitude, message, created_at)
+                        VALUES (:uid, "geofence_violation", :lat, :lng, :msg, NOW())
+                    ');
+                    $alertStmt->execute([
+                        'uid' => $userId,
+                        'lat' => $latitude,
+                        'lng' => $longitude,
+                        'msg' => 'Punch-in blocked: within 5 KM of registered home (' . $distFromHomeKm . ' KM)',
+                    ]);
+                } catch (_) {}
+
+                sendJsonResponse([
+                    'status' => 'error',
+                    'error_code' => 'WITHIN_5KM_GEOFENCE',
+                    'message' => 'Aap apne registered location se 5 KM ki range se ander hain. Punch in karne ke liye kripya 5 KM zone ke bahar jaayen.',
+                    'data' => [
+                        'is_field_sales' => true,
+                        'current_distance_km' => $distFromHomeKm,
+                        'required_min_distance_km' => 5.0,
+                        'home_address' => $user['base_address'] ?? 'Registered Home',
+                    ],
+                ], 403);
+            }
+        }
+    } else {
+        // Standard Desk Employee Geofence verification
+        if ($officeLat !== null && $officeLng !== null) {
+            $earthRadius = 6371000;
+            $dLat = deg2rad($latitude - $officeLat);
+            $dLon = deg2rad($longitude - $officeLng);
+            $a = sin($dLat / 2) * sin($dLat / 2) +
+                 cos(deg2rad($officeLat)) * cos(deg2rad($latitude)) *
+                 sin($dLon / 2) * sin($dLon / 2);
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+            $distanceMeters = round($earthRadius * $c);
+
+            if ($distanceMeters > $officeRadius) {
+                sendJsonResponse([
+                    'status' => 'error',
+                    'error_code' => 'OUT_OF_RANGE',
+                    'message' => "You are out of range ({$distanceMeters}m away). Allowed radius is {$officeRadius}m from {$officeName}. Please go to your assigned work location.",
+                    'data' => [
+                        'distance_meters' => $distanceMeters,
+                        'allowed_radius_meters' => $officeRadius,
+                        'company_name' => $officeName,
+                        'company_latitude' => $officeLat,
+                        'company_longitude' => $officeLng,
+                        'user_latitude' => $latitude,
+                        'user_longitude' => $longitude,
+                    ],
+                ], 403);
+            }
         }
     }
 
@@ -305,6 +390,21 @@ try {
 
     $newId = (int) $pdo->lastInsertId();
     $clockInFormatted = date('h:i A', strtotime($now));
+
+    // Record initial coordinates in sales tracking logs if field sales
+    if ($isFieldSales && $latitude !== null && $longitude !== null) {
+        try {
+            $trackStmt = $pdo->prepare('
+                INSERT INTO sales_tracking_logs (user_id, latitude, longitude, accuracy, speed, battery_level, recorded_at, created_at)
+                VALUES (:uid, :lat, :lng, 10.0, 0.0, 100, NOW(), NOW())
+            ');
+            $trackStmt->execute([
+                'uid' => $userId,
+                'lat' => $latitude,
+                'lng' => $longitude,
+            ]);
+        } catch (_) {}
+    }
 
     sendJsonResponse([
         'status' => 'success',

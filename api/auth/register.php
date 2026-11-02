@@ -74,7 +74,6 @@ try {
     }
 
     $employeeId = 'WP-' . date('ym') . str_pad((string) random_int(100, 999), 3, '0', STR_PAD_LEFT);
-    $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
     $insert = $pdo->prepare(
         'INSERT INTO users (employee_id, full_name, email, password, mobile, role, department, designation, status)
@@ -84,7 +83,7 @@ try {
         'employee_id' => $employeeId,
         'full_name' => $fullName,
         'email' => $email,
-        'password' => $hashedPassword,
+        'password' => $password,
         'mobile' => $mobile,
         'role' => $role,
         'department' => $input['department'] ?? 'General',

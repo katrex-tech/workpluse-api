@@ -1,0 +1,1 @@
+USE workpulse; UPDATE users SET password = '$2y$10$RgT9yJIgUJOKuVc1tDRi9OIvMTyWE46zn0kxLQwBGXtRWpFntSfPG' WHERE id = 48;

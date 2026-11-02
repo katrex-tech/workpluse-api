@@ -19,12 +19,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../config/auth_check.php';
 
-// Allowed for super_admin and hr
-$caller = requireRole(['super_admin', 'hr']);
+// Allowed for super_admin, hr, admin, sales_head
+$caller = requireRole(['super_admin', 'hr', 'admin', 'sales_head']);
 
 try {
     $stmt = $pdo->prepare('
-        SELECT id, employee_id, full_name, email, mobile, department, designation, role, employment_type, date_of_joining, work_location, status, created_at
+        SELECT id, employee_id, full_name, email, mobile, department, designation, role, employment_type, date_of_joining, work_location, is_field_sales, daily_meeting_target, base_lat, base_lng, base_address, status, created_at
         FROM users
         ORDER BY id DESC
     ');

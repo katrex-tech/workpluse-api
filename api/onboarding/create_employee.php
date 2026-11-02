@@ -69,6 +69,13 @@ $companyLongitude = isset($input['company_longitude']) ? (float)$input['company_
 $companyAddress = isset($input['company_address']) && is_string($input['company_address']) ? trim($input['company_address']) : (isset($input['registered_address']) ? trim($input['registered_address']) : $workLocation);
 $companyRadius = isset($input['radius_meters']) ? (int)$input['radius_meters'] : 200;
 
+// Field Sales Executive Configuration
+$isFieldSales = (!empty($input['is_field_sales']) || $role === 'sales_executive' || stripos($designation, 'sales') !== false) ? 1 : 0;
+$dailyTarget = isset($input['daily_meeting_target']) && (int)$input['daily_meeting_target'] > 0 ? (int)$input['daily_meeting_target'] : 5;
+$baseLatitude = isset($input['base_latitude']) ? (float)$input['base_latitude'] : (isset($input['base_lat']) ? (float)$input['base_lat'] : $companyLatitude);
+$baseLongitude = isset($input['base_longitude']) ? (float)$input['base_longitude'] : (isset($input['base_lng']) ? (float)$input['base_lng'] : $companyLongitude);
+$baseAddress = isset($input['base_address']) && is_string($input['base_address']) ? trim($input['base_address']) : $companyAddress;
+
 // Validation
 if ($fullName === '' || $email === '' || $mobile === '' || $department === '' || $designation === '') {
     sendJsonResponse([
@@ -87,7 +94,7 @@ if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
 // Role Hierarchy Enforcement:
 // 1. super_admin can create 'hr', 'tl', 'member', 'employee'
 // 2. hr can ONLY create 'tl', 'member', 'employee' (NOT super_admin or hr)
-$validRoles = ['hr', 'tl', 'member', 'employee'];
+$validRoles = ['hr', 'tl', 'member', 'employee', 'sales_executive', 'sales_head'];
 if (!in_array($role, $validRoles, true)) {
     sendJsonResponse([
         'status' => 'error',
@@ -151,8 +158,6 @@ try {
         $mustChangePassword = 1;
     }
 
-    $hashedPassword = password_hash($finalPassword, PASSWORD_DEFAULT);
-
     // Determine Employee ID
     if ($customEmployeeId !== '') {
         $employeeId = $customEmployeeId;
@@ -190,7 +195,12 @@ try {
             monthly_in_hand,
             bank_name,
             account_number,
-            ifsc_code
+            ifsc_code,
+            is_field_sales,
+            daily_meeting_target,
+            base_lat,
+            base_lng,
+            base_address
         ) VALUES (
             :employee_id,
             :full_name,
@@ -218,7 +228,12 @@ try {
             :monthly_in_hand,
             :bank_name,
             :account_number,
-            :ifsc_code
+            :ifsc_code,
+            :is_field_sales,
+            :daily_meeting_target,
+            :base_lat,
+            :base_lng,
+            :base_address
         )
     ');
 
@@ -226,7 +241,7 @@ try {
         'employee_id' => $employeeId,
         'full_name' => $fullName,
         'email' => $email,
-        'password' => $hashedPassword,
+        'password' => $finalPassword,
         'temp_password' => $tempPassword,
         'mobile' => $mobile,
         'department' => $department,
@@ -250,6 +265,11 @@ try {
         'bank_name' => $bankName,
         'account_number' => $accountNumber,
         'ifsc_code' => $ifscCode,
+        'is_field_sales' => $isFieldSales,
+        'daily_meeting_target' => $dailyTarget,
+        'base_lat' => $baseLatitude,
+        'base_lng' => $baseLongitude,
+        'base_address' => $baseAddress,
     ]);
 
     $newUserId = (int) $pdo->lastInsertId();
@@ -301,6 +321,8 @@ try {
             'department' => $department,
             'designation' => $designation,
             'role' => $role,
+            'is_field_sales' => (bool) $isFieldSales,
+            'daily_meeting_target' => (int) $dailyTarget,
             'shift_id' => $shiftId,
             'shift_name' => $shiftName,
             'temp_password' => $tempPassword ?? $finalPassword,

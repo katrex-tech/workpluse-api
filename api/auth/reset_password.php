@@ -86,11 +86,10 @@ try {
         ], 403);
     }
 
-    // Hash the new password and update
-    $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+    // Update password
     $updateStmt = $pdo->prepare('UPDATE users SET password = :password, must_change_password = 0 WHERE id = :id');
     $updateStmt->execute([
-        'password' => $hashedPassword,
+        'password' => $password,
         'id' => (int) $user['id'],
     ]);
 

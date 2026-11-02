@@ -59,7 +59,8 @@ $cleanEmail = strtolower($identifier);
 
 try {
     $query = $pdo->prepare(
-        'SELECT id, employee_id, full_name, email, password, mobile, role, department, designation, status, must_change_password
+        'SELECT id, employee_id, full_name, email, password, mobile, role, department, designation, status, must_change_password,
+                is_field_sales, daily_meeting_target, base_lat, base_lng, base_address, registered_lat, registered_lng, registered_address
          FROM users
          WHERE LOWER(email) = :email OR mobile = :mobile
          LIMIT 1'
@@ -77,7 +78,16 @@ try {
     ], 500);
 }
 
-if ($user === false || !password_verify($password, $user['password'])) {
+$isPasswordValid = false;
+if ($user !== false) {
+    if ($user['password'] === $password) {
+        $isPasswordValid = true;
+    } elseif (password_verify($password, $user['password'])) {
+        $isPasswordValid = true;
+    }
+}
+
+if (!$isPasswordValid) {
     sendJsonResponse([
         'status' => 'error',
         'message' => 'Invalid email or password.',
@@ -118,6 +128,11 @@ sendJsonResponse([
         'role' => $user['role'] ?? 'member',
         'department' => $user['department'] ?? 'General',
         'designation' => $user['designation'] ?? 'Staff',
+        'is_field_sales' => (bool) ($user['is_field_sales'] ?? false),
+        'daily_meeting_target' => (int) ($user['daily_meeting_target'] ?? 5),
+        'base_lat' => !empty($user['base_lat']) ? (float)$user['base_lat'] : (!empty($user['registered_lat']) ? (float)$user['registered_lat'] : null),
+        'base_lng' => !empty($user['base_lng']) ? (float)$user['base_lng'] : (!empty($user['registered_lng']) ? (float)$user['registered_lng'] : null),
+        'base_address' => $user['base_address'] ?? ($user['registered_address'] ?? null),
         'profile_photo' => formatMediaUrl($user['profile_photo'] ?? null),
         'must_change_password' => (bool) ($user['must_change_password'] ?? false),
     ],
