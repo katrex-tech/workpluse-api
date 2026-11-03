@@ -47,6 +47,19 @@ $description = isset($input['description']) && is_string($input['description'])
     ? trim($input['description'])
     : '';
 
+$projectName = isset($input['project_name']) && is_string($input['project_name'])
+    ? trim($input['project_name'])
+    : null;
+
+$managerId = isset($input['manager_id']) ? filter_var($input['manager_id'], FILTER_VALIDATE_INT) : null;
+$managerName = isset($input['manager_name']) && is_string($input['manager_name'])
+    ? trim($input['manager_name'])
+    : null;
+
+$totalTime = isset($input['total_time']) && is_string($input['total_time'])
+    ? trim($input['total_time'])
+    : null;
+
 $isValidDate = static function ($value) {
     if (!is_string($value)) {
         return false;
@@ -77,29 +90,38 @@ try {
     }
 
     $insert = $pdo->prepare(
-        'INSERT INTO work_reports (user_id, report_date, description, status)
-         VALUES (:user_id, :report_date, :description, :status)'
+        'INSERT INTO work_reports (user_id, project_name, manager_id, manager_name, report_date, description, total_time, status)
+         VALUES (:user_id, :project_name, :manager_id, :manager_name, :report_date, :description, :total_time, :status)'
     );
     $insert->execute([
         'user_id' => $userId,
+        'project_name' => $projectName,
+        'manager_id' => $managerId ?: null,
+        'manager_name' => $managerName ?: null,
         'report_date' => $reportDate,
         'description' => $description,
+        'total_time' => $totalTime,
         'status' => 'submitted',
     ]);
     $reportId = (int) $pdo->lastInsertId();
 
-    // Create notifications for HRs & Super Admins
+    // Create notifications for HRs & Super Admins and selected manager
     try {
         $empName = $user['full_name'] ?? 'An employee';
-        $adminsStmt = $pdo->query("SELECT id FROM users WHERE role IN ('super_admin', 'hr') AND status = 'active'");
+        $adminsStmt = $pdo->query("SELECT id FROM users WHERE role IN ('super_admin', 'admin', 'hr') AND status = 'active'");
         $adminIds = $adminsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        if ($managerId && !in_array($managerId, $adminIds, false)) {
+            $adminIds[] = (int) $managerId;
+        }
 
         $notifStmt = $pdo->prepare("
             INSERT INTO notifications (user_id, title, message, is_read, created_at)
             VALUES (?, ?, ?, 0, NOW())
         ");
         $notifTitle = "Daily Work Report Submitted 📋";
-        $notifMsg = "{$empName} submitted a work report for {$reportDate}.";
+        $projectContext = $projectName ? " for '{$projectName}'" : "";
+        $notifMsg = "{$empName} submitted a work report{$projectContext} for {$reportDate}.";
         foreach ($adminIds as $adminId) {
             $notifStmt->execute([(int)$adminId, $notifTitle, $notifMsg]);
         }
@@ -114,7 +136,7 @@ try {
     error_log('Work report submission failed: ' . $exception->getMessage());
     sendJsonResponse([
         'status' => false,
-        'message' => 'Unable to submit work report.',
+        'message' => 'Unable to submit work report: ' . $exception->getMessage(),
         'data' => [],
     ], 500);
 }

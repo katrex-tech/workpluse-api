@@ -36,20 +36,49 @@ if ($userIdInput !== null) {
     }
 }
 
+$scope = strtolower(trim($_GET['scope'] ?? ''));
+$filterUserId = isset($_GET['filter_user_id']) ? filter_var($_GET['filter_user_id'], FILTER_VALIDATE_INT) : null;
+
+// Determine user role if user_id is provided
+$userRole = '';
+if ($userId !== null) {
+    try {
+        $uStmt = $pdo->prepare('SELECT role FROM users WHERE id = :id LIMIT 1');
+        $uStmt->execute(['id' => $userId]);
+        $row = $uStmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            $userRole = strtolower(trim($row['role'] ?? ''));
+        }
+    } catch (Exception $e) {}
+}
+
+$isAdminOrHr = in_array($userRole, ['admin', 'super_admin', 'hr']);
+
 $sql = 'SELECT
             wr.id,
             wr.user_id,
             u.full_name AS user_name,
+            wr.project_name,
+            wr.manager_id,
+            wr.manager_name,
             wr.report_date,
             wr.description,
+            wr.total_time,
             wr.status,
             wr.created_at
         FROM work_reports AS wr
         INNER JOIN users AS u ON u.id = wr.user_id';
 $parameters = [];
-if ($userId !== null) {
-    $sql .= ' WHERE wr.user_id = :user_id';
-    $parameters['user_id'] = $userId;
+
+if ($filterUserId) {
+    $sql .= ' WHERE wr.user_id = :filter_user_id';
+    $parameters['filter_user_id'] = $filterUserId;
+} elseif ($userId !== null) {
+    // If scope is 'all' and user is admin or HR, show all reports; otherwise show user\'s own reports
+    if (!($scope === 'all' && $isAdminOrHr)) {
+        $sql .= ' WHERE wr.user_id = :user_id';
+        $parameters['user_id'] = $userId;
+    }
 }
 $sql .= ' ORDER BY wr.report_date DESC, wr.id DESC';
 

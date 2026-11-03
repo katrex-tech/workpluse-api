@@ -33,10 +33,10 @@ try {
             status
         FROM users
         WHERE status = 'active'
-          AND LOWER(TRIM(role)) IN ('hr', 'super_admin', 'tl', 'team_lead')
+          AND LOWER(TRIM(role)) IN ('admin', 'super_admin', 'hr', 'tl', 'team_lead')
         ORDER BY 
             CASE 
-                WHEN LOWER(TRIM(role)) = 'super_admin' THEN 1
+                WHEN LOWER(TRIM(role)) IN ('super_admin', 'admin') THEN 1
                 WHEN LOWER(TRIM(role)) = 'hr' THEN 2
                 ELSE 3
             END,
@@ -51,6 +51,8 @@ try {
         $roleName = $m['role'];
         if ($rawRole === 'super_admin') {
             $roleName = 'Super Admin';
+        } elseif ($rawRole === 'admin') {
+            $roleName = 'Admin';
         } elseif ($rawRole === 'hr') {
             $roleName = 'HR';
         } elseif ($rawRole === 'tl' || $rawRole === 'team_lead') {
