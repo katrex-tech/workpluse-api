@@ -54,20 +54,40 @@ if ($userId !== null) {
 
 $isAdminOrHr = in_array($userRole, ['admin', 'super_admin', 'hr']);
 
-$sql = 'SELECT
+// Check which optional columns exist in work_reports to prevent SQL 1054 errors on unmigrated databases
+$existingColumns = [];
+try {
+    $colStmt = $pdo->query("SHOW COLUMNS FROM work_reports");
+    $existingColumns = $colStmt->fetchAll(PDO::FETCH_COLUMN);
+} catch (Exception $e) {
+    $existingColumns = ['id', 'user_id', 'report_date', 'description', 'status', 'created_at'];
+}
+
+$hasCol = static function ($col) use ($existingColumns) {
+    return in_array($col, $existingColumns, true);
+};
+
+$projectCol = $hasCol('project_name') ? 'wr.project_name' : "'' AS project_name";
+$mgrIdCol = $hasCol('manager_id') ? 'wr.manager_id' : 'NULL AS manager_id';
+$mgrNameCol = $hasCol('manager_name') ? 'wr.manager_name' : "'' AS manager_name";
+$totalTimeCol = $hasCol('total_time') ? 'wr.total_time' : "'' AS total_time";
+$remarksCol = $hasCol('admin_remarks') ? 'wr.admin_remarks' : "'' AS admin_remarks";
+
+$sql = "SELECT
             wr.id,
             wr.user_id,
             u.full_name AS user_name,
-            wr.project_name,
-            wr.manager_id,
-            wr.manager_name,
+            {$projectCol},
+            {$mgrIdCol},
+            {$mgrNameCol},
             wr.report_date,
             wr.description,
-            wr.total_time,
+            {$totalTimeCol},
+            {$remarksCol},
             wr.status,
             wr.created_at
         FROM work_reports AS wr
-        INNER JOIN users AS u ON u.id = wr.user_id';
+        INNER JOIN users AS u ON u.id = wr.user_id";
 $parameters = [];
 
 if ($filterUserId) {

@@ -160,9 +160,16 @@ try {
 
     // Determine Employee ID
     if ($customEmployeeId !== '') {
-        $employeeId = $customEmployeeId;
+        $checkEmp = $pdo->prepare('SELECT id FROM users WHERE employee_id = :emp_id LIMIT 1');
+        $checkEmp->execute(['emp_id' => $customEmployeeId]);
+        if ($checkEmp->fetch()) {
+            // If provided ID already exists, auto-generate a guaranteed unique ID
+            $employeeId = 'WP-' . date('Y') . '-' . random_int(1000, 9999);
+        } else {
+            $employeeId = $customEmployeeId;
+        }
     } else {
-        // Generate e.g. WP-2026-XXXX
+        // Generate e.g. WP-XXXX
         $employeeId = 'WP-' . random_int(1000, 9999);
     }
 

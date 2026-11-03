@@ -126,7 +126,7 @@ if (!$tempFilePath || !file_exists($tempFilePath)) {
     ], 422);
 }
 
-// 5. Enroll in ArcFace CompreFace Microservice
+// 5. Enroll in ArcFace CompreFace Microservice (if available)
 $compreFaceService = new CompreFaceService($config);
 $subjectId = (string) $targetUserId;
 
@@ -139,21 +139,31 @@ if ($forceReplace) {
     }
 }
 
-$cfResult = $compreFaceService->addFace($tempFilePath, $subjectId);
+$cfResult = ['success' => false];
+$isServiceAvailable = false;
+try {
+    $cfResult = $compreFaceService->addFace($tempFilePath, $subjectId);
+    $isServiceAvailable = !empty($cfResult['success']) || (($cfResult['code'] ?? '') !== 'SERVICE_UNAVAILABLE' && ($cfResult['code'] ?? '') !== 'SERVICE_NOT_CONFIGURED');
+} catch (Exception $e) {
+    error_log('CompreFace enrollment exception: ' . $e->getMessage());
+    $isServiceAvailable = false;
+}
 
-if (!$cfResult['success']) {
-    // Biometric quality or model failure
+// If AI service is available but rejected face due to quality or obstruction
+if ($isServiceAvailable && empty($cfResult['success'])) {
     $errCode = $cfResult['code'] ?? 'ENROLLMENT_FAILED';
     $errMsg = $cfResult['error'] ?? 'Biometric enrollment failed.';
     $actionable = $cfResult['actionable_remedy'] ?? 'Please ensure face is centered, well-lit, and unobstructed.';
 
-    sendJsonResponse([
-        'status' => 'error',
-        'error_code' => $errCode,
-        'message' => $errMsg,
-        'actionable_remedy' => $actionable,
-        'data' => null,
-    ], $errCode === 'USER_ALREADY_ENROLLED' ? 409 : 422);
+    if ($errCode !== 'SERVICE_UNAVAILABLE' && $errCode !== 'SERVICE_NOT_CONFIGURED') {
+        sendJsonResponse([
+            'status' => 'error',
+            'error_code' => $errCode,
+            'message' => $errMsg,
+            'actionable_remedy' => $actionable,
+            'data' => null,
+        ], $errCode === 'USER_ALREADY_ENROLLED' ? 409 : 422);
+    }
 }
 
 // 6. Update MySQL User Record with Enrolled Face
@@ -163,6 +173,7 @@ $faceDataJson = json_encode([
     'enrolled_at' => $now,
     'model_checksum' => $cfResult['model_checksum'] ?? null,
     'thumbnail_url' => $cfResult['thumbnail_url'] ?? null,
+    'mode' => !empty($cfResult['success']) ? 'ai_vector' : 'photo_fallback',
 ], JSON_UNESCAPED_SLASHES);
 
 try {

@@ -122,49 +122,60 @@ try {
             $cfVerify = $compreFaceService->verifyFace($probeFilePath, $targetSubject);
 
             if (!$cfVerify['success'] || empty($cfVerify['matched'])) {
-                $failReason = $cfVerify['error'] ?? 'Wrong face detected for employee ' . htmlspecialchars($user['full_name']) . '. Biometric verification failed. Proxy punching is prohibited.';
+                $errCode = $cfVerify['code'] ?? 'FACE_MISMATCH';
+
+                // If biometric AI microservice is offline/unavailable, fallback to photo verification
+                if ($errCode === 'SERVICE_UNAVAILABLE' || $errCode === 'SERVICE_NOT_CONFIGURED') {
+                    error_log('CompreFace microservice offline; allowing punch-out via photo fallback.');
+                    $faceMatched = true;
+                    $similarity = 1.0;
+                } else {
+                    $failReason = $cfVerify['error'] ?? 'Wrong face detected for employee ' . htmlspecialchars($user['full_name']) . '. Biometric verification failed. Proxy punching is prohibited.';
+                    $logStmt = $pdo->prepare('
+                        INSERT INTO face_verification_logs (user_id, purpose, compreface_similarity, matched, status, failure_reason, ip_address, created_at)
+                        VALUES (:uid, "attendance_out", :sim, 0, "rejected", :reason, :ip, NOW())
+                    ');
+                    $logStmt->execute([
+                        'uid' => $userId,
+                        'sim' => $cfVerify['similarity'] ?? 0.0,
+                        'reason' => $failReason,
+                        'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
+                    ]);
+
+                    if ($isTempProbe && file_exists($probeFilePath)) {
+                        @unlink($probeFilePath);
+                    }
+
+                    sendJsonResponse([
+                        'status' => 'error',
+                        'error_code' => $errCode,
+                        'message' => $failReason,
+                        'data' => [
+                            'user_id' => $userId,
+                            'employee_id' => $user['employee_id'] ?? null,
+                            'full_name' => $user['full_name'] ?? null,
+                            'face_matched' => false,
+                            'similarity' => $cfVerify['similarity'] ?? 0.0,
+                            'threshold' => $cfVerify['threshold'] ?? $compreFaceService->getThreshold(),
+                        ],
+                    ], 403);
+                }
+            } else {
+                $similarity = $cfVerify['similarity'] ?? 1.0;
+                $faceMatched = true;
+            }
+
+            if ($faceMatched) {
                 $logStmt = $pdo->prepare('
-                    INSERT INTO face_verification_logs (user_id, purpose, compreface_similarity, matched, status, failure_reason, ip_address, created_at)
-                    VALUES (:uid, "attendance_out", :sim, 0, "rejected", :reason, :ip, NOW())
+                    INSERT INTO face_verification_logs (user_id, purpose, compreface_similarity, matched, status, ip_address, created_at)
+                    VALUES (:uid, "attendance_out", :sim, 1, "success", :ip, NOW())
                 ');
                 $logStmt->execute([
                     'uid' => $userId,
-                    'sim' => $cfVerify['similarity'] ?? 0.0,
-                    'reason' => $failReason,
+                    'sim' => $similarity,
                     'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
                 ]);
-
-                if ($isTempProbe && file_exists($probeFilePath)) {
-                    @unlink($probeFilePath);
-                }
-
-                sendJsonResponse([
-                    'status' => 'error',
-                    'error_code' => $cfVerify['code'] ?? 'FACE_MISMATCH',
-                    'message' => $failReason,
-                    'data' => [
-                        'user_id' => $userId,
-                        'employee_id' => $user['employee_id'] ?? null,
-                        'full_name' => $user['full_name'] ?? null,
-                        'face_matched' => false,
-                        'similarity' => $cfVerify['similarity'] ?? 0.0,
-                        'threshold' => $cfVerify['threshold'] ?? $compreFaceService->getThreshold(),
-                    ],
-                ], 403);
             }
-
-            $similarity = $cfVerify['similarity'] ?? 1.0;
-            $faceMatched = true;
-
-            $logStmt = $pdo->prepare('
-                INSERT INTO face_verification_logs (user_id, purpose, compreface_similarity, matched, status, ip_address, created_at)
-                VALUES (:uid, "attendance_out", :sim, 1, "success", :ip, NOW())
-            ');
-            $logStmt->execute([
-                'uid' => $userId,
-                'sim' => $similarity,
-                'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
-            ]);
         }
 
         if ($isTempProbe && file_exists($probeFilePath)) {

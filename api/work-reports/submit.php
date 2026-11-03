@@ -89,20 +89,61 @@ try {
         ], 404);
     }
 
-    $insert = $pdo->prepare(
-        'INSERT INTO work_reports (user_id, project_name, manager_id, manager_name, report_date, description, total_time, status)
-         VALUES (:user_id, :project_name, :manager_id, :manager_name, :report_date, :description, :total_time, :status)'
-    );
-    $insert->execute([
-        'user_id' => $userId,
-        'project_name' => $projectName,
-        'manager_id' => $managerId ?: null,
-        'manager_name' => $managerName ?: null,
-        'report_date' => $reportDate,
-        'description' => $description,
-        'total_time' => $totalTime,
-        'status' => 'submitted',
-    ]);
+    // Check available columns in work_reports to prevent SQL 1054 errors on unmigrated databases
+    $existingCols = [];
+    try {
+        $colStmt = $pdo->query("SHOW COLUMNS FROM work_reports");
+        $existingCols = $colStmt->fetchAll(PDO::FETCH_COLUMN);
+    } catch (Exception $e) {
+        $existingCols = ['id', 'user_id', 'report_date', 'description', 'status', 'created_at'];
+    }
+
+    $hasCol = static function ($col) use ($existingCols) {
+        return in_array($col, $existingCols, true);
+    };
+
+    if ($hasCol('project_name') && $hasCol('manager_id') && $hasCol('manager_name') && $hasCol('total_time')) {
+        $insert = $pdo->prepare(
+            'INSERT INTO work_reports (user_id, project_name, manager_id, manager_name, report_date, description, total_time, status)
+             VALUES (:user_id, :project_name, :manager_id, :manager_name, :report_date, :description, :total_time, :status)'
+        );
+        $insert->execute([
+            'user_id' => $userId,
+            'project_name' => $projectName,
+            'manager_id' => $managerId ?: null,
+            'manager_name' => $managerName ?: null,
+            'report_date' => $reportDate,
+            'description' => $description,
+            'total_time' => $totalTime,
+            'status' => 'submitted',
+        ]);
+    } else {
+        // Fallback for legacy work_reports schema: preserve project, manager, and time in description
+        $prefixItems = [];
+        if (!empty($projectName)) {
+            $prefixItems[] = "Project: {$projectName}";
+        }
+        if (!empty($managerName)) {
+            $prefixItems[] = "Manager: {$managerName}";
+        }
+        if (!empty($totalTime)) {
+            $prefixItems[] = "Total Time: {$totalTime}";
+        }
+        $legacyDescription = !empty($prefixItems)
+            ? '[' . implode(' | ', $prefixItems) . "]\n\n" . $description
+            : $description;
+
+        $insert = $pdo->prepare(
+            'INSERT INTO work_reports (user_id, report_date, description, status)
+             VALUES (:user_id, :report_date, :description, :status)'
+        );
+        $insert->execute([
+            'user_id' => $userId,
+            'report_date' => $reportDate,
+            'description' => $legacyDescription,
+            'status' => 'submitted',
+        ]);
+    }
     $reportId = (int) $pdo->lastInsertId();
 
     // Create notifications for HRs & Super Admins and selected manager

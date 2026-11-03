@@ -232,8 +232,20 @@ try {
         }
 
         $targetUserId = (int) $req['user_id'];
-        $upd = $pdo->prepare("UPDATE work_reports SET status = :status, admin_remarks = :remarks WHERE id = :id");
-        $upd->execute(['status' => $statusValue, 'remarks' => $remarks, 'id' => $id]);
+
+        $hasRemarksCol = false;
+        try {
+            $colCheck = $pdo->query("SHOW COLUMNS FROM work_reports LIKE 'admin_remarks'")->fetch();
+            $hasRemarksCol = !empty($colCheck);
+        } catch (Exception $e) {}
+
+        if ($hasRemarksCol) {
+            $upd = $pdo->prepare("UPDATE work_reports SET status = :status, admin_remarks = :remarks WHERE id = :id");
+            $upd->execute(['status' => $statusValue, 'remarks' => $remarks, 'id' => $id]);
+        } else {
+            $upd = $pdo->prepare("UPDATE work_reports SET status = :status WHERE id = :id");
+            $upd->execute(['status' => $statusValue, 'id' => $id]);
+        }
 
         if ($action === 'approve') {
             $notifTitle = "Work Report Approved! 📋";
