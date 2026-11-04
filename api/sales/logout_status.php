@@ -35,6 +35,22 @@ try {
 
     $isFieldSales = !empty($user['is_field_sales']) || strtolower($user['role'] ?? '') === 'sales_executive';
 
+    // Attendance status for today
+    $attStmt = $pdo->prepare('
+        SELECT id, punch_in, punch_out, status
+        FROM attendance
+        WHERE user_id = :uid AND date = :dt
+        ORDER BY id DESC
+        LIMIT 1
+    ');
+    $attStmt->execute(['uid' => $userId, 'dt' => $date]);
+    $attendanceRecord = $attStmt->fetch(PDO::FETCH_ASSOC);
+
+    $isPunchedIn = false;
+    if ($attendanceRecord && !empty($attendanceRecord['punch_in']) && empty($attendanceRecord['punch_out'])) {
+        $isPunchedIn = true;
+    }
+
     // If NOT field sales, always allow standard logout
     if (!$isFieldSales) {
         sendJsonResponse([
@@ -42,6 +58,8 @@ try {
             'message' => 'Standard employee: no meeting quota required.',
             'data' => [
                 'is_field_sales' => false,
+                'is_punched_in' => $isPunchedIn,
+                'punch_in_time' => $attendanceRecord['punch_in'] ?? null,
                 'can_logout' => true,
                 'target_meetings' => 0,
                 'completed_meetings' => 0,
@@ -103,6 +121,8 @@ try {
         'message' => $canLogout ? 'Logout eligible.' : 'Logout restricted: Target pending.',
         'data' => [
             'is_field_sales' => true,
+            'is_punched_in' => $isPunchedIn,
+            'punch_in_time' => $attendanceRecord['punch_in'] ?? null,
             'can_logout' => $canLogout,
             'date' => $date,
             'target_meetings' => $target,

@@ -21,6 +21,34 @@ require_once __DIR__ . '/../../../config/auth_check.php';
 
 $userId = getAuthenticatedUserId();
 
+// 0. Verify that sales employee is currently punched in for today
+$today = date('Y-m-d');
+$attStmt = $pdo->prepare('
+    SELECT id, punch_in, punch_out, status 
+    FROM attendance 
+    WHERE user_id = :uid AND date = :dt 
+    ORDER BY id DESC 
+    LIMIT 1
+');
+$attStmt->execute(['uid' => $userId, 'dt' => $today]);
+$todayAttendance = $attStmt->fetch(PDO::FETCH_ASSOC);
+
+$isPunchedIn = false;
+if ($todayAttendance && !empty($todayAttendance['punch_in']) && empty($todayAttendance['punch_out'])) {
+    $isPunchedIn = true;
+}
+
+if (!$isPunchedIn) {
+    sendJsonResponse([
+        'status' => 'error',
+        'message' => 'Punch in first then start meeting',
+        'data' => [
+            'is_punched_in' => false,
+            'code' => 'PUNCH_IN_REQUIRED'
+        ],
+    ], 403);
+}
+
 // Extract fields (support both multipart form-data and application/json)
 $rawBody = file_get_contents('php://input');
 $jsonInput = [];
