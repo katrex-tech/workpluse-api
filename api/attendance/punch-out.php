@@ -124,11 +124,45 @@ try {
             if (!$cfVerify['success'] || empty($cfVerify['matched'])) {
                 $errCode = $cfVerify['code'] ?? 'FACE_MISMATCH';
 
-                // If biometric AI microservice is offline/unavailable, fallback to photo verification
+                // If biometric AI microservice is offline/unavailable, verify client-side biometric match
                 if ($errCode === 'SERVICE_UNAVAILABLE' || $errCode === 'SERVICE_NOT_CONFIGURED') {
-                    error_log('CompreFace microservice offline; allowing punch-out via photo fallback.');
-                    $faceMatched = true;
-                    $similarity = 1.0;
+                    $clientMatched = isset($input['face_matched']) && ($input['face_matched'] === true || $input['face_matched'] === 1 || $input['face_matched'] === '1' || $input['face_matched'] === 'true');
+                    $clientSimilarity = isset($input['similarity']) ? (float)$input['similarity'] : 0.0;
+
+                    if ($clientMatched && $clientSimilarity >= 0.70) {
+                        $faceMatched = true;
+                        $similarity = $clientSimilarity;
+                    } else {
+                        $failReason = 'Wrong face detected for employee ' . htmlspecialchars($user['full_name']) . '. Biometric verification failed. Proxy punching is prohibited.';
+                        $logStmt = $pdo->prepare('
+                            INSERT INTO face_verification_logs (user_id, purpose, compreface_similarity, matched, status, failure_reason, ip_address, created_at)
+                            VALUES (:uid, "attendance_out", :sim, 0, "rejected", :reason, :ip, NOW())
+                        ');
+                        $logStmt->execute([
+                            'uid' => $userId,
+                            'sim' => $clientSimilarity,
+                            'reason' => $failReason,
+                            'ip' => $_SERVER['REMOTE_ADDR'] ?? null,
+                        ]);
+
+                        if ($isTempProbe && file_exists($probeFilePath)) {
+                            @unlink($probeFilePath);
+                        }
+
+                        sendJsonResponse([
+                            'status' => 'error',
+                            'error_code' => 'FACE_MISMATCH',
+                            'message' => $failReason,
+                            'data' => [
+                                'user_id' => $userId,
+                                'employee_id' => $user['employee_id'] ?? null,
+                                'full_name' => $user['full_name'] ?? null,
+                                'face_matched' => false,
+                                'similarity' => $clientSimilarity,
+                                'threshold' => 0.70,
+                            ],
+                        ], 403);
+                    }
                 } else {
                     $failReason = $cfVerify['error'] ?? 'Wrong face detected for employee ' . htmlspecialchars($user['full_name']) . '. Biometric verification failed. Proxy punching is prohibited.';
                     $logStmt = $pdo->prepare('

@@ -168,12 +168,19 @@ if ($isServiceAvailable && empty($cfResult['success'])) {
 
 // 6. Update MySQL User Record with Enrolled Face
 $now = date('Y-m-d H:i:s');
+$biometricProfile = null;
+if (!empty($_POST['biometric_profile'])) {
+    $rawBp = $_POST['biometric_profile'];
+    $biometricProfile = is_array($rawBp) ? $rawBp : json_decode($rawBp, true);
+}
+
 $faceDataJson = json_encode([
     'image_path' => $savedRelativePath,
     'enrolled_at' => $now,
     'model_checksum' => $cfResult['model_checksum'] ?? null,
     'thumbnail_url' => $cfResult['thumbnail_url'] ?? null,
-    'mode' => !empty($cfResult['success']) ? 'ai_vector' : 'photo_fallback',
+    'biometric_profile' => $biometricProfile,
+    'mode' => !empty($cfResult['success']) ? 'ai_vector' : 'mlkit_landmarks',
 ], JSON_UNESCAPED_SLASHES);
 
 try {
